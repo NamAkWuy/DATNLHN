@@ -60,7 +60,3 @@ def get_current_admin(current_user: User = Depends(get_current_user)) -> User:
 
 def success_response(data=None, message: str = "Thành công") -> dict:
     return {"success": True, "data": data, "message": message}
-
-
-def error_response(message: str, code: int = 400):
-    raise HTTPException(status_code=code, detail=message)

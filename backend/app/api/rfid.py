@@ -1,7 +1,6 @@
 """
 Các endpoint quản lý thẻ RFID.
 """
-from datetime import datetime, timezone
 from app.utils import now_vn
 
 from fastapi import APIRouter, Depends, HTTPException, status

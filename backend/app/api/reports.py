@@ -2,7 +2,7 @@
 Các endpoint báo cáo và thống kê.
 """
 import calendar
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from app.utils import now_vn, today_vn
 
 from fastapi import APIRouter, Depends, HTTPException, Query

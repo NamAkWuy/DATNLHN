@@ -2,7 +2,7 @@
 Các endpoint cho lịch sử chấm công.
 """
 import math
-from datetime import datetime, date, timezone
+from datetime import datetime, date
 from app.utils import now_vn, today_vn
 from typing import Optional
 

@@ -3,7 +3,6 @@ Các endpoint đăng ký và nhận diện khuôn mặt.
 """
 import json
 import logging
-from datetime import datetime, timezone
 from app.utils import now_vn
 
 from fastapi import APIRouter, Depends, HTTPException
