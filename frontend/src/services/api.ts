@@ -14,10 +14,16 @@ import type {
   Notification,
 } from '../types'
 
-// Dùng đường dẫn tương đối — Vite dev proxy (vite.config.ts) sẽ chuyển tiếp
-// /api → http://localhost:8000. Tránh CORS preflight và IPv4/IPv6 mismatch.
+// Dev: dùng đường dẫn tương đối — Vite dev proxy (vite.config.ts) sẽ chuyển
+// tiếp /api → http://localhost:8000. Tránh CORS preflight và IPv4/IPv6 mismatch.
+// Production: set VITE_API_BASE_URL=https://your-backend.onrender.com khi
+// build trên Vercel để gọi thẳng tới backend đã deploy.
+const API_BASE = import.meta.env.VITE_API_BASE_URL
+  ? `${import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')}/api/v1`
+  : '/api/v1'
+
 const api = axios.create({
-  baseURL: '/api/v1',
+  baseURL: API_BASE,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -292,8 +298,8 @@ export const leaveApi = {
     const res = await api.put<ApiResponse<LeaveRequest>>(`/requests/${id}/approve`)
     return res.data
   },
-  reject: async (id: number, reject_reason: string) => {
-    const res = await api.put<ApiResponse<LeaveRequest>>(`/requests/${id}/reject`, { reject_reason })
+  reject: async (id: number, reason: string) => {
+    const res = await api.put<ApiResponse<LeaveRequest>>(`/requests/${id}/reject`, { reason })
     return res.data
   },
 }

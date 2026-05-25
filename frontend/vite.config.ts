@@ -17,7 +17,7 @@ const rewriteLocation = (proxy: any) => {
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: 3000,
+    port: 5173,
     host: true,
     proxy: {
       '/api': {

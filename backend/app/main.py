@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api import auth, departments, employees, face, rfid, attendance, leave_requests, reports, ws, notifications
 from app.api.attendance import set_broadcast_fn
 from app.api.ws import broadcast_attendance_event
+from app.config import settings
 
 logging.basicConfig(
     level=logging.INFO,
@@ -68,12 +69,7 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

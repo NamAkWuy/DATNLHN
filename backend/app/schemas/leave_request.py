@@ -1,6 +1,6 @@
 from datetime import datetime, timezone, timedelta
 from typing import Optional
-from pydantic import BaseModel, field_serializer
+from pydantic import AliasChoices, BaseModel, Field, field_serializer
 
 _VN_TZ = timezone(timedelta(hours=7))
 
@@ -43,7 +43,7 @@ class LeaveRequestUpdate(BaseModel):
 
 
 class LeaveRequestReject(BaseModel):
-    reason: str
+    reason: str = Field(validation_alias=AliasChoices("reason", "reject_reason"))
 
 
 class LeaveRequestResponse(BaseModel):
