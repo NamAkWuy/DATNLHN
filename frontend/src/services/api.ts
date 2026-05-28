@@ -18,9 +18,19 @@ import type {
 // tiếp /api → http://localhost:8000. Tránh CORS preflight và IPv4/IPv6 mismatch.
 // Production: set VITE_API_BASE_URL=https://your-backend.onrender.com khi
 // build trên Vercel để gọi thẳng tới backend đã deploy.
-const API_BASE = import.meta.env.VITE_API_BASE_URL
-  ? `${import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')}/api/v1`
+const API_ORIGIN = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') || ''
+
+const API_BASE = API_ORIGIN
+  ? `${API_ORIGIN}/api/v1`
   : '/api/v1'
+
+export const resolveAssetUrl = (url?: string | null) => {
+  if (!url) return ''
+  if (/^(https?:|data:|blob:)/i.test(url)) return url
+
+  const normalizedPath = url.startsWith('/') ? url : `/${url}`
+  return API_ORIGIN ? `${API_ORIGIN}${normalizedPath}` : normalizedPath
+}
 
 const api = axios.create({
   baseURL: API_BASE,
@@ -32,7 +42,7 @@ const api = axios.create({
 // Interceptor cho request: gắn token xác thực vào header
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('access_token')
+    const token = sessionStorage.getItem('access_token')
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
@@ -47,6 +57,7 @@ api.interceptors.response.use(
   (error) => {
     const isLoginEndpoint = error.config?.url?.includes('/auth/login')
     if (error.response?.status === 401 && !isLoginEndpoint) {
+      sessionStorage.removeItem('access_token')
       localStorage.removeItem('access_token')
       localStorage.removeItem('user')
       window.location.href = '/login'

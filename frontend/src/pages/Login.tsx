@@ -22,8 +22,7 @@ const Login: React.FC = () => {
     setError('')
     setIsLoading(true)
     try {
-      await login(username.trim(), password)
-      const user = JSON.parse(localStorage.getItem('user') || '{}')
+      const user = await login(username.trim(), password)
       if (user.role === 'admin') {
         navigate('/admin/dashboard')
       } else {

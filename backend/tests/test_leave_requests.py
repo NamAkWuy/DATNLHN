@@ -61,3 +61,27 @@ def test_reject_leave_request_requires_pending_status(client, db, employee):
 
     assert res.status_code == 400
     assert req.status == "da_duyet"
+
+
+def test_cancel_leave_request_returns_cancelled_request(client, db, employee):
+    req = _make_leave_request(db, employee)
+
+    res = client.delete(f"/api/v1/requests/{req.id}")
+
+    assert res.status_code == 200
+    payload = res.json()
+    assert payload["success"] is True
+    assert payload["data"]["id"] == req.id
+    assert payload["data"]["status"] == "da_huy"
+
+    db.refresh(req)
+    assert req.status == "da_huy"
+
+
+def test_cancel_leave_request_requires_pending_status(client, db, employee):
+    req = _make_leave_request(db, employee, status="da_duyet")
+
+    res = client.delete(f"/api/v1/requests/{req.id}")
+
+    assert res.status_code == 400
+    assert req.status == "da_duyet"

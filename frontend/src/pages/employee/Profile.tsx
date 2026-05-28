@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Edit2, Save, X, Camera, User, Mail, Phone, Briefcase, Building2, CreditCard, Scan } from 'lucide-react'
-import { employeeApi } from '../../services/api'
+import { employeeApi, resolveAssetUrl } from '../../services/api'
 import { useAuth } from '../../hooks/useAuth'
 import PageTitle from '../../components/PageTitle'
 import LoadingSpinner from '../../components/LoadingSpinner'
@@ -112,7 +112,7 @@ const Profile: React.FC = () => {
             <div className="w-28 h-28 rounded-full bg-mint-100 flex items-center justify-center mx-auto overflow-hidden">
               {employee.avatar_url ? (
                 <img
-                  src={`${employee.avatar_url}?t=${encodeURIComponent(employee.updated_at || '')}`}
+                  src={`${resolveAssetUrl(employee.avatar_url)}?t=${encodeURIComponent(employee.updated_at || '')}`}
                   alt={employee.full_name}
                   className="w-full h-full object-cover"
                 />

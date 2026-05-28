@@ -138,7 +138,7 @@ CREATE TABLE IF NOT EXISTS don_tu (
     thoi_gian_bat_dau   DATETIME        NOT NULL                  COMMENT 'Thời điểm bắt đầu nghỉ / đi muộn',
     thoi_gian_ket_thuc  DATETIME        NOT NULL                  COMMENT 'Thời điểm kết thúc',
     ly_do               TEXT            NOT NULL                  COMMENT 'Lý do',
-    trang_thai          VARCHAR(20)     NOT NULL DEFAULT 'cho_duyet' COMMENT 'Trạng thái: cho_duyet | da_duyet | tu_choi',
+    trang_thai          VARCHAR(20)     NOT NULL DEFAULT 'cho_duyet' COMMENT 'Trạng thái: cho_duyet | da_duyet | tu_choi | da_huy',
     ly_do_tu_choi       TEXT                NULL                  COMMENT 'Lý do từ chối (chỉ có khi trang_thai = tu_choi)',
     nguoi_duyet         INT                 NULL                  COMMENT 'Mã tài khoản quản lý đã duyệt/từ chối (khóa ngoại → tai_khoan)',
     ngay_duyet          DATETIME            NULL                  COMMENT 'Thời điểm duyệt hoặc từ chối đơn',

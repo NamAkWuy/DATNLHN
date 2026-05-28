@@ -10,13 +10,14 @@ import LoadingSpinner from '../../components/LoadingSpinner'
 import Pagination from '../../components/Pagination'
 import { format } from 'date-fns'
 
-type TabKey = 'all' | 'cho_duyet' | 'da_duyet' | 'tu_choi'
+type TabKey = 'all' | 'cho_duyet' | 'da_duyet' | 'tu_choi' | 'da_huy'
 
 const tabs: { key: TabKey; label: string }[] = [
   { key: 'all', label: 'Tất cả' },
   { key: 'cho_duyet', label: 'Chờ duyệt' },
   { key: 'da_duyet', label: 'Đã duyệt' },
   { key: 'tu_choi', label: 'Từ chối' },
+  { key: 'da_huy', label: 'Đã hủy' },
 ]
 
 const typeOptions = [
@@ -83,6 +84,9 @@ const MyRequests: React.FC = () => {
     mutationFn: leaveApi.cancel,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['my-requests'] })
+      queryClient.invalidateQueries({ queryKey: ['my-requests-pending'] })
+      setActiveTab('da_huy')
+      setPage(1)
       setCancelTarget(null)
     },
   })
@@ -115,6 +119,16 @@ const MyRequests: React.FC = () => {
     setEditRequest(null)
     createMutation.reset()
     updateMutation.reset()
+  }
+
+  const openCancel = (req: LeaveRequest) => {
+    cancelMutation.reset()
+    setCancelTarget(req)
+  }
+
+  const closeCancel = () => {
+    cancelMutation.reset()
+    setCancelTarget(null)
   }
 
   const validate = (): boolean => {
@@ -225,7 +239,7 @@ const MyRequests: React.FC = () => {
                               <Edit2 size={15} />
                             </button>
                             <button
-                              onClick={() => setCancelTarget(req)}
+                              onClick={() => openCancel(req)}
                               className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
                               title="Hủy đơn"
                             >
@@ -335,12 +349,12 @@ const MyRequests: React.FC = () => {
       {/* Cancel Confirm Modal */}
       <Modal
         isOpen={!!cancelTarget}
-        onClose={() => setCancelTarget(null)}
+        onClose={closeCancel}
         title="Hủy đơn từ"
         size="sm"
         footer={
           <>
-            <button onClick={() => setCancelTarget(null)} className="btn-secondary">Không</button>
+            <button onClick={closeCancel} className="btn-secondary">Không</button>
             <button
               onClick={() => cancelTarget && cancelMutation.mutate(cancelTarget.id)}
               disabled={cancelMutation.isPending}
@@ -351,10 +365,19 @@ const MyRequests: React.FC = () => {
           </>
         }
       >
-        <p className="text-gray-600">
-          Bạn có chắc muốn hủy đơn{' '}
-          <span className="font-semibold">{cancelTarget ? typeLabel[cancelTarget.type] : ''}</span> này không?
-        </p>
+        <div className="space-y-3">
+          <p className="text-gray-600">
+            Bạn có chắc muốn hủy đơn{' '}
+            <span className="font-semibold">{cancelTarget ? typeLabel[cancelTarget.type] : ''}</span> này không?
+          </p>
+          {cancelMutation.isError && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+              <p className="text-red-700 text-sm">
+                {cancelMutation.error?.message || 'Hủy đơn thất bại'}
+              </p>
+            </div>
+          )}
+        </div>
       </Modal>
     </div>
   )

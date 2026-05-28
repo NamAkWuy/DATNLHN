@@ -206,7 +206,8 @@ def cancel_request(
     req.status = "da_huy"
     req.updated_at = now_vn()
     db.commit()
-    return success_response(message="Hủy đơn thành công.")
+    db.refresh(req)
+    return success_response(data=_req_to_response(req).model_dump(), message="Hủy đơn thành công.")
 
 
 @router.put("/{req_id}/approve", response_model=dict)

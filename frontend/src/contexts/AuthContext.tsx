@@ -6,7 +6,7 @@ interface AuthContextType {
   user: User | null
   isLoading: boolean
   isAuthenticated: boolean
-  login: (username: string, password: string) => Promise<void>
+  login: (username: string, password: string) => Promise<User>
   logout: () => void
 }
 
@@ -18,20 +18,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     const initAuth = async () => {
-      const token = localStorage.getItem('access_token')
-      const savedUser = localStorage.getItem('user')
-      if (token && savedUser) {
+      // Remove sessions created by older versions that were shared across tabs.
+      localStorage.removeItem('access_token')
+      localStorage.removeItem('user')
+
+      const token = sessionStorage.getItem('access_token')
+      if (token) {
         try {
-          setUser(JSON.parse(savedUser))
-          // Xác thực lại token với server (lấy thông tin mới nhất)
           const res = await authApi.getMe()
           if (res.success) {
             setUser(res.data)
-            localStorage.setItem('user', JSON.stringify(res.data))
           }
         } catch {
-          localStorage.removeItem('access_token')
-          localStorage.removeItem('user')
+          sessionStorage.removeItem('access_token')
           setUser(null)
         }
       }
@@ -43,18 +42,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = useCallback(async (username: string, password: string) => {
     const res = await authApi.login(username, password)
     if (res.success) {
-      localStorage.setItem('access_token', res.data.access_token)
-      localStorage.setItem('user', JSON.stringify(res.data.user))
+      sessionStorage.setItem('access_token', res.data.access_token)
       setUser(res.data.user)
+      return res.data.user
     } else {
       throw new Error(res.message || 'Đăng nhập thất bại')
     }
   }, [])
 
   const logout = useCallback(() => {
-    authApi.logout().catch(() => {})
-    localStorage.removeItem('access_token')
-    localStorage.removeItem('user')
+    sessionStorage.removeItem('access_token')
     setUser(null)
     window.location.href = '/login'
   }, [])
