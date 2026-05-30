@@ -16,6 +16,8 @@ Tests cover:
 import pytest
 from datetime import datetime, timezone, date
 
+from app.utils import today_vn
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -88,7 +90,7 @@ class TestFaceAttendance:
         assert body["data"]["log"]["check_out"] is not None
 
         # Kiểm tra DB – chỉ có 1 bản ghi hôm nay
-        today = datetime.now(timezone.utc).date()
+        today = today_vn()
         logs = (
             db.query(AttendanceLog)
             .filter(
@@ -118,7 +120,7 @@ class TestFaceAttendance:
         from app.models.attendance_log import AttendanceLog
 
         _checkin(client, employee.id)
-        today = datetime.now(timezone.utc).date()
+        today = today_vn()
 
         log = (
             db.query(AttendanceLog)
@@ -305,7 +307,7 @@ class TestKioskFullFlow:
         assert checkout_res.json()["data"]["action"] == "check_out"
 
         # Kiểm tra DB
-        today = datetime.now(timezone.utc).date()
+        today = today_vn()
         log = (
             db.query(AttendanceLog)
             .filter(
@@ -340,7 +342,7 @@ class TestKioskFullFlow:
         assert checkout_res.status_code == 200
         assert checkout_res.json()["data"]["action"] == "check_out"
 
-        today = datetime.now(timezone.utc).date()
+        today = today_vn()
         log = (
             db.query(AttendanceLog)
             .filter(
@@ -375,7 +377,7 @@ class TestKioskFullFlow:
         _checkin(client, emp_a.id, method="face")
         _checkin(client, emp_b.id, method="face")
 
-        today = datetime.now(timezone.utc).date()
+        today = today_vn()
         log_a = (
             db.query(AttendanceLog)
             .filter(AttendanceLog.employee_id == emp_a.id, AttendanceLog.date == today)
