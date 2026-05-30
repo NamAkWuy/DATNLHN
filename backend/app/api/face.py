@@ -19,7 +19,6 @@ from app.services.face_service import (
     DEEPFACE_AVAILABLE,
     cosine_similarity,
     extract_face_encoding_from_base64,
-    find_best_match,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,9 +30,7 @@ router = APIRouter()
 #   - người khác nhau:   ~0.05–0.40
 # Ngưỡng 0.50 → tỉ lệ chấp nhận sai (false-accept) ~1% trên LFW, từ chối sai thấp.
 # Đặt 0.55 để siết chặt hơn cho ngữ cảnh ít người (10–50 NV).
-RECOGNIZE_THRESHOLD = 0.55
 VERIFY_THRESHOLD = float(os.getenv("FACE_VERIFY_THRESHOLD", "0.50"))
-MOCK_RECOGNIZE_THRESHOLD = 0.90
 MOCK_VERIFY_THRESHOLD = float(os.getenv("FACE_MOCK_VERIFY_THRESHOLD", "0.86"))
 
 # ─── Adaptive enrollment (online template gallery) ──────────────────────────
@@ -60,17 +57,15 @@ def _current_source() -> str:
     return "arcface_mtcnn_v1" if DEEPFACE_AVAILABLE else "mock_v2"
 
 
-def _threshold_for(source: str, mode: str = "recognize") -> float:
+def _verify_threshold_for(source: str) -> float:
     # Source "arcface_mtcnn_v1" = encoding ArcFace (cosine similarity range thực tế
-    # 0.55–0.85 với cùng người, dùng RECOGNIZE_THRESHOLD=0.55).
+    # 0.55–0.85 với cùng người, dùng VERIFY_THRESHOLD=0.50).
     # Source "mock_v2" = embedding pixel-based fallback khi DeepFace chưa cài,
-    # phân bố đặc khác hẳn → cần MOCK_RECOGNIZE_THRESHOLD=0.90.
+    # phân bố đặc khác hẳn → cần MOCK_VERIFY_THRESHOLD=0.86.
     # Trước đây check "deepface" → SAI, vì _current_source trả "arcface_mtcnn_v1"
     # → mọi verify đều rơi vào nhánh mock 0.90, gây false-reject hàng loạt
     # (chính bug làm 0.85 vẫn fail).
-    if mode == "verify":
-        return MOCK_VERIFY_THRESHOLD if source == "mock_v2" else VERIFY_THRESHOLD
-    return MOCK_RECOGNIZE_THRESHOLD if source == "mock_v2" else RECOGNIZE_THRESHOLD
+    return MOCK_VERIFY_THRESHOLD if source == "mock_v2" else VERIFY_THRESHOLD
 
 
 @router.post("/register/{employee_id}", response_model=dict)
@@ -262,7 +257,7 @@ def verify_face_for_employee(
     from app.services.face_service import cosine_similarity
 
     current = _current_source()
-    threshold = _threshold_for(current, mode="verify")
+    threshold = _verify_threshold_for(current)
     adapt_threshold = ADAPT_SIMILARITY if current == "arcface_mtcnn_v1" else MOCK_ADAPT_SIMILARITY
 
     # ── So khớp với toàn bộ gallery — chỉ giữ encoding cùng source và cùng kích thước ──
@@ -449,60 +444,13 @@ def _pick_redundant_adaptive(all_for_emp: list[FaceEncoding]) -> FaceEncoding | 
             best_victim = min(adaptive_only, key=lambda fe: fe.created_at)
     return best_victim
 
-
 @router.post("/recognize", response_model=dict)
 def recognize_face(
     body: FaceRecognizeRequest,
     db: Session = Depends(get_db),
 ):
-    try:
-        query_encoding = extract_face_encoding_from_base64(body.image_base64)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    all_encodings = db.query(FaceEncoding).all()
-    if not all_encodings:
-        raise HTTPException(status_code=404, detail="Hệ thống chưa có dữ liệu khuôn mặt nào được đăng ký.")
-
-    current = _current_source()
-    stored = []
-    for fe in all_encodings:
-        try:
-            raw = json.loads(fe.encoding_data)
-            if isinstance(raw, dict):
-                if raw.get("source") != current:
-                    continue  # bỏ qua encoding không tương thích
-                enc_list = raw["encoding"]
-            else:
-                continue  # format cũ (list trần, không có source tag) — luôn bỏ qua
-            if len(enc_list) != len(query_encoding):
-                continue  # kích thước vector không khớp
-            stored.append({"employee_id": fe.employee_id, "encoding": enc_list})
-        except (json.JSONDecodeError, TypeError):
-            continue
-
-    best_id, confidence = find_best_match(
-        query_encoding, stored, threshold=_threshold_for(current)
-    )
-
-    if best_id is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Không nhận diện được khuôn mặt (độ tin cậy cao nhất: {confidence:.3f}).",
-        )
-
-    emp = db.query(Employee).filter(Employee.id == best_id).first()
-    if not emp:
-        raise HTTPException(status_code=404, detail="Không tìm thấy nhân viên khớp trong hệ thống.")
-
-    if emp.status != "active":
-        raise HTTPException(status_code=403, detail="Tài khoản nhân viên đã bị vô hiệu hóa.")
-
-    return success_response(
-        data={
-            "employee_id": emp.id,
-            "employee_name": emp.full_name,
-            "employee_code": emp.employee_code,
-            "confidence": round(confidence, 4),
-        }
+    _ = body, db
+    raise HTTPException(
+        status_code=403,
+        detail="Bat buoc quet the RFID truoc roi xac thuc khuon mat 1:1.",
     )

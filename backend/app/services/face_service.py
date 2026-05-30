@@ -213,6 +213,16 @@ def _mock_embedding_from_face(img_bgr, bbox) -> list[float]:
     return arr.tolist()
 
 
+def mock_encoding_for_employee(employee_id: int) -> list[float]:
+    """Deterministic 128-D unit vector for service tests and mock fixtures."""
+    rng = np.random.default_rng(int(employee_id))
+    arr = rng.normal(size=128).astype(np.float64)
+    norm = float(np.linalg.norm(arr))
+    if norm == 0.0:
+        return [0.0] * 128
+    return (arr / norm).tolist()
+
+
 def extract_face_encoding(image_bytes: bytes) -> list[float]:
     """
     Trích xuất vector đặc trưng khuôn mặt từ bytes ảnh.
@@ -366,31 +376,4 @@ def compare_faces(
     similarity = cosine_similarity(encoding1, encoding2)
     is_match = similarity >= threshold
     return is_match, similarity
-
-
-def find_best_match(
-    query_encoding: list[float],
-    stored_encodings: list[dict],  # danh sách dict {"employee_id": int, "encoding": list[float]}
-    threshold: float = 0.4,
-) -> tuple[int | None, float]:
-    """
-    So sánh query_encoding với toàn bộ encoding đã lưu trong database.
-
-    Trả về:
-        (employee_id_giống_nhất, độ_giống_cao_nhất) nếu tìm được match vượt ngưỡng,
-        ngược lại (None, độ_giống_cao_nhất).
-    """
-    best_id = None
-    best_score = -1.0
-
-    for record in stored_encodings:
-        score = cosine_similarity(query_encoding, record["encoding"])
-        if score > best_score:
-            best_score = score
-            best_id = record["employee_id"]
-
-    if best_score >= threshold:
-        return best_id, best_score
-    return None, best_score
-
 

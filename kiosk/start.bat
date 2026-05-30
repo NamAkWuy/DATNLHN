@@ -11,7 +11,6 @@ if "%API_BASE_URL%"=="" (
     echo     API: %API_BASE_URL%
 )
 echo     Nhan Q hoac ESC de thoat
-echo     Nhan SPACE de nhan dien ngay
 echo     Nhan R de dang ky khuon mat (nhap ma NV, Enter xac nhan)
 echo.
 venv\Scripts\python.exe main.py

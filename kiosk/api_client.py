@@ -2,7 +2,6 @@
 Client HTTP — gửi yêu cầu lên Backend API của hệ thống chấm công.
 
 Mỗi hàm tương ứng với 1 endpoint backend:
-    - recognize_face:        nhận diện khuôn mặt 1:N
     - verify_face:           xác thực khuôn mặt 1:1 với 1 nhân viên cụ thể
     - scan_rfid_card:        tra cứu nhân viên theo UID thẻ RFID
     - checkin_attendance:    ghi nhận chấm công vào / ra
@@ -200,13 +199,6 @@ def start_outbox_sync_worker() -> None:
 
 def stop_outbox_sync_worker() -> None:
     _sync_stop.set()
-
-
-def recognize_face(frame_bgr) -> Optional[dict]:
-    """Nhận diện khuôn mặt 1:N — backend tự tìm xem ảnh là ai."""
-    image_base64 = frame_to_base64(frame_bgr)
-    _, data = _post("/face/recognize", {"image_base64": image_base64})
-    return data
 
 
 def verify_face(employee_id: int, frame_bgr) -> Optional[dict]:

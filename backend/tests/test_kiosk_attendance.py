@@ -271,6 +271,13 @@ class TestRFIDScan:
 # ---------------------------------------------------------------------------
 
 class TestKioskFullFlow:
+    def test_face_recognition_without_rfid_is_blocked(self, client):
+        res = client.post(
+            "/api/v1/face/recognize",
+            json={"image_base64": "anything"},
+        )
+        assert res.status_code == 403
+
     def test_rfid_scan_then_checkin_flow(self, client, employee, db):
         """
         Mô phỏng luồng kiosk đầy đủ:

@@ -5,7 +5,6 @@ Tests cover:
 - extract_face_encoding: dimensions, determinism, base64 variants
 - cosine_similarity: edge cases
 - compare_faces: match / no-match / threshold
-- find_best_match: correct employee, no match
 - mock_encoding_for_employee: stability, uniqueness, unit-norm
 """
 import math
@@ -21,7 +20,6 @@ from app.services.face_service import (
     extract_face_encoding_from_base64,
     cosine_similarity,
     compare_faces,
-    find_best_match,
     mock_encoding_for_employee,
 )
 
@@ -32,23 +30,37 @@ from app.services.face_service import (
 
 def _make_image_bytes(color=(100, 150, 200), size=(50, 50)) -> bytes:
     """
-    Return raw BMP bytes of a solid-color image.
+    Return raw BMP bytes of a deterministic patterned image.
 
-    BMP is used (not JPEG) because BMP pixel data starts at byte 54,
-    which is within the first 64 bytes — the region the mock encoder
-    uses as a seed.  JPEG headers are identical across colors, so
-    solid-color JPEGs of the same size would produce the same mock seed.
+    The unit tests force the service into mock mode, so the image needs enough
+    pixel variation for the mock embedding to be non-zero and color-dependent.
     """
     try:
         from PIL import Image
-        img = Image.new("RGB", size, color=color)
+        r, g, b = color
+        img = Image.new("RGB", size)
+        pixels = img.load()
+        for y in range(size[1]):
+            for x in range(size[0]):
+                pixels[x, y] = (
+                    (r + x * 3 + y) % 256,
+                    (g + x + y * 2) % 256,
+                    (b + x * 2 + y * 3) % 256,
+                )
         buf = BytesIO()
         img.save(buf, format="BMP")
         return buf.getvalue()
     except ImportError:
-        # Minimal unique raw bytes based on color as fallback
+        # Minimal unique patterned bytes based on color as fallback
         r, g, b = color
-        return bytes([r, g, b] * 22 + [0, 0])  # 68 bytes, unique per color
+        return bytes(((r + i) % 256, (g + i * 2) % 256, (b + i * 3) % 256)[i % 3] for i in range(256))
+
+
+@pytest.fixture(autouse=True)
+def force_mock_face_pipeline(monkeypatch):
+    monkeypatch.setattr("app.services.face_service.DEEPFACE_AVAILABLE", False)
+    monkeypatch.setattr("app.services.face_service.detect_face_bbox", lambda _image_bytes: (0, 0, 50, 50))
+    monkeypatch.setattr("app.services.face_service._quality_check", lambda _face_gray: None)
 
 
 # ---------------------------------------------------------------------------
@@ -199,54 +211,6 @@ class TestCompareFaces:
         assert len(result) == 2
         assert isinstance(result[0], bool)
         assert isinstance(result[1], float)
-
-
-# ---------------------------------------------------------------------------
-# find_best_match
-# ---------------------------------------------------------------------------
-
-class TestFindBestMatch:
-    def _make_stored(self, employee_ids: list[int]) -> list[dict]:
-        return [
-            {"employee_id": eid, "encoding": mock_encoding_for_employee(eid)}
-            for eid in employee_ids
-        ]
-
-    def test_returns_correct_employee_for_exact_match(self):
-        stored = self._make_stored([1, 2, 3])
-        query = mock_encoding_for_employee(2)
-        best_id, score = find_best_match(query, stored, threshold=0.4)
-        assert best_id == 2
-        assert abs(score - 1.0) < 1e-6
-
-    def test_returns_none_when_no_stored_encodings(self):
-        query = mock_encoding_for_employee(1)
-        best_id, score = find_best_match(query, [], threshold=0.4)
-        assert best_id is None
-        assert score == -1.0
-
-    def test_returns_none_when_best_score_below_threshold(self):
-        """Nếu độ tương đồng tốt nhất dưới ngưỡng → trả về None."""
-        stored = self._make_stored([10, 20, 30])
-        # Dùng một encoding hoàn toàn khác biệt
-        query = mock_encoding_for_employee(999)
-        best_id, score = find_best_match(query, stored, threshold=0.99)
-        # Với threshold 0.99, chỉ vector gần như giống hệt mới vượt qua
-        assert best_id is None
-
-    def test_returns_highest_scoring_employee(self):
-        """Trong nhiều nhân viên, phải trả về người có score cao nhất."""
-        stored = self._make_stored([1, 2, 3, 4, 5])
-        # Query với encoding của nhân viên 3
-        query = mock_encoding_for_employee(3)
-        best_id, score = find_best_match(query, stored, threshold=0.5)
-        assert best_id == 3
-
-    def test_score_is_float(self):
-        stored = self._make_stored([1])
-        query = mock_encoding_for_employee(1)
-        _, score = find_best_match(query, stored)
-        assert isinstance(score, float)
 
 
 # ---------------------------------------------------------------------------

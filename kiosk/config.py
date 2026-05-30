@@ -1,6 +1,6 @@
 """Cấu hình cho trạm chấm công (Kiosk)."""
 
-# ─── Backend ────────────────────────────────────────────────────────────────
+# ─── Backend ───────────────────────────────────────────────────────────────
 import os
 
 
@@ -24,7 +24,7 @@ LOCAL_OUTBOX_DB = os.getenv(
 OUTBOX_SYNC_INTERVAL = float(os.getenv("OUTBOX_SYNC_INTERVAL", "10"))
 OUTBOX_BATCH_SIZE = int(os.getenv("OUTBOX_BATCH_SIZE", "20"))
 
-# ─── Camera ─────────────────────────────────────────────────────────────────
+# ─── Camera ─────────────────────────────────────────────────────────────
 # CAMERA_SOURCE — nguồn camera:
 #   • 0  = webcam tích hợp của laptop (mặc định)
 #   • 1+ = webcam USB ngoài nếu có cắm thêm
@@ -86,8 +86,7 @@ ENROLL_POSE_INTERVAL = 1.0  # giây giữa mỗi lần chụp khi đăng ký
 # Tương thích ngược — main.py phiên bản cũ vẫn import CAMERA_INDEX
 CAMERA_INDEX = CAMERA_SOURCE
 
-# ─── Nhận diện khuôn mặt ────────────────────────────────────────────────────
-FACE_CAPTURE_INTERVAL = 2.0      # Giây giữa các lần thử nhận diện
+# ─── Hiển thị kết quả ───────────────────────────────────────────────────────
 DISPLAY_RESULT_DURATION = 3.0    # Giây hiển thị kết quả trên màn hình
 
 # Độ phân giải gửi lên backend — đây là đòn bẩy CHÍNH cho độ chính xác:
