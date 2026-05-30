@@ -3,6 +3,7 @@ Các endpoint đăng ký và nhận diện khuôn mặt.
 """
 import json
 import logging
+import os
 from app.utils import now_vn
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -31,7 +32,9 @@ router = APIRouter()
 # Ngưỡng 0.50 → tỉ lệ chấp nhận sai (false-accept) ~1% trên LFW, từ chối sai thấp.
 # Đặt 0.55 để siết chặt hơn cho ngữ cảnh ít người (10–50 NV).
 RECOGNIZE_THRESHOLD = 0.55
+VERIFY_THRESHOLD = float(os.getenv("FACE_VERIFY_THRESHOLD", "0.50"))
 MOCK_RECOGNIZE_THRESHOLD = 0.90
+MOCK_VERIFY_THRESHOLD = float(os.getenv("FACE_MOCK_VERIFY_THRESHOLD", "0.86"))
 
 # ─── Adaptive enrollment (online template gallery) ──────────────────────────
 # Mỗi nhân viên có thể có tối đa MAX_GALLERY_SIZE template:
@@ -57,7 +60,7 @@ def _current_source() -> str:
     return "arcface_mtcnn_v1" if DEEPFACE_AVAILABLE else "mock_v2"
 
 
-def _threshold_for(source: str) -> float:
+def _threshold_for(source: str, mode: str = "recognize") -> float:
     # Source "arcface_mtcnn_v1" = encoding ArcFace (cosine similarity range thực tế
     # 0.55–0.85 với cùng người, dùng RECOGNIZE_THRESHOLD=0.55).
     # Source "mock_v2" = embedding pixel-based fallback khi DeepFace chưa cài,
@@ -65,6 +68,8 @@ def _threshold_for(source: str) -> float:
     # Trước đây check "deepface" → SAI, vì _current_source trả "arcface_mtcnn_v1"
     # → mọi verify đều rơi vào nhánh mock 0.90, gây false-reject hàng loạt
     # (chính bug làm 0.85 vẫn fail).
+    if mode == "verify":
+        return MOCK_VERIFY_THRESHOLD if source == "mock_v2" else VERIFY_THRESHOLD
     return MOCK_RECOGNIZE_THRESHOLD if source == "mock_v2" else RECOGNIZE_THRESHOLD
 
 
@@ -257,7 +262,7 @@ def verify_face_for_employee(
     from app.services.face_service import cosine_similarity
 
     current = _current_source()
-    threshold = _threshold_for(current)
+    threshold = _threshold_for(current, mode="verify")
     adapt_threshold = ADAPT_SIMILARITY if current == "arcface_mtcnn_v1" else MOCK_ADAPT_SIMILARITY
 
     # ── So khớp với toàn bộ gallery — chỉ giữ encoding cùng source và cùng kích thước ──

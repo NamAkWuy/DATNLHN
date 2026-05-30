@@ -11,8 +11,8 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000/api/v1").rstrip("/")
-WS_URL = os.getenv("WS_URL", "ws://localhost:8000/ws/kiosk")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://datnlhn.onrender.com/api/v1").rstrip("/")
+WS_URL = os.getenv("WS_URL", "wss://datnlhn.onrender.com/ws/kiosk")
 DEVICE_ID = os.getenv("DEVICE_ID", "kiosk-001")
 
 # Local outbox: luu su kien cham cong chua dong bo vao SQLite tren may kiosk.
@@ -60,8 +60,8 @@ DETECT_WIDTH = 640
 # ─── Xác thực nhiều lần (multi-shot) ────────────────────────────────────────
 # Số lần chụp xác thực sau khi quẹt RFID — cả N lần đều phải khớp thì mới ghi
 # nhận chấm công. Giúp giảm mạnh trường hợp người khác qua mặt (false positive).
-VERIFY_SHOTS = 2
-VERIFY_SHOT_INTERVAL = 0.4   # giây giữa mỗi lần chụp
+VERIFY_SHOTS = int(os.getenv("VERIFY_SHOTS", "1"))
+VERIFY_SHOT_INTERVAL = float(os.getenv("VERIFY_SHOT_INTERVAL", "0.4"))   # giây giữa mỗi lần chụp
 
 # ─── Burst capture (chọn frame nét nhất) ────────────────────────────────────
 # Mỗi "shot" thực chất gồm BURST_FRAMES frame chụp liên tiếp; kiosk so sánh

@@ -6,7 +6,7 @@ cd /d "%~dp0"
 
 echo [+] Dang chay Kiosk...
 if "%API_BASE_URL%"=="" (
-    echo     API: http://localhost:8000/api/v1
+    echo     API: https://datnlhn.onrender.com/api/v1
 ) else (
     echo     API: %API_BASE_URL%
 )
