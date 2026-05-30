@@ -256,7 +256,7 @@ class TestCheckinAttendance:
         assert result == {"error": "already_checked_out"}
 
     @patch("api_client._client.post")
-    def test_exception_returns_none(self, mock_post):
+    def test_exception_queues_offline_event(self, mock_post):
         mock_post.side_effect = Exception(
             "Timeout"
         )
@@ -264,7 +264,9 @@ class TestCheckinAttendance:
         import api_client
         result = api_client.checkin_attendance(employee_id=3)
 
-        assert result is None
+        assert result is not None
+        assert result["error"] == "queued_offline"
+        assert "client_event_id" in result
 
     @patch("api_client._client.post")
     def test_posts_to_correct_endpoint(self, mock_post):
@@ -288,6 +290,20 @@ class TestCheckinAttendance:
         json_payload = mock_post.call_args[1]["json"]
         assert json_payload["employee_id"] == 9
         assert json_payload["method"] == "rfid"
+
+    @patch("api_client._client.post")
+    def test_sends_kiosk_sync_metadata(self, mock_post):
+        mock_resp = _mock_httpx_response(400, {"detail": "error"})
+        mock_post.return_value = mock_resp
+
+        import api_client
+        api_client.checkin_attendance(employee_id=9, method="rfid", rfid_uid="UID123")
+
+        json_payload = mock_post.call_args[1]["json"]
+        assert json_payload["rfid_uid"] == "UID123"
+        assert json_payload["device_id"]
+        assert json_payload["client_event_id"]
+        assert json_payload["occurred_at"]
 
 
 # ---------------------------------------------------------------------------

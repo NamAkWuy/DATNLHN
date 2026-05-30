@@ -129,6 +129,62 @@ class TestFaceAttendance:
         log_date = log.date if isinstance(log.date, date) else date.fromisoformat(str(log.date))
         assert log_date == today
 
+    def test_checkin_uses_kiosk_occurred_at(self, client, employee, db):
+        from app.models.attendance_log import AttendanceLog
+        from app.models.kiosk_event import KioskAttendanceEvent
+
+        res = client.post(
+            "/api/v1/attendance/checkin",
+            json={
+                "employee_id": employee.id,
+                "method": "rfid",
+                "occurred_at": "2026-05-29T07:30:00+07:00",
+                "client_event_id": "evt-test-occurred-at",
+                "device_id": "kiosk-test",
+            },
+        )
+        assert res.status_code == 200
+
+        log = db.query(AttendanceLog).filter(AttendanceLog.employee_id == employee.id).first()
+        assert log.check_in.hour == 7
+        assert log.check_in.minute == 30
+        log_date = log.date if isinstance(log.date, date) else date.fromisoformat(str(log.date))
+        assert log_date == date(2026, 5, 29)
+
+        event = db.query(KioskAttendanceEvent).filter(
+            KioskAttendanceEvent.event_id == "evt-test-occurred-at"
+        ).first()
+        assert event is not None
+        assert event.action == "check_in"
+        assert event.device_id == "kiosk-test"
+
+    def test_retry_same_client_event_id_is_idempotent(self, client, employee, db):
+        from app.models.attendance_log import AttendanceLog
+        from app.models.kiosk_event import KioskAttendanceEvent
+
+        payload = {
+            "employee_id": employee.id,
+            "method": "rfid",
+            "occurred_at": "2026-05-29T08:00:00+07:00",
+            "client_event_id": "evt-test-idempotent",
+            "device_id": "kiosk-test",
+        }
+
+        first = client.post("/api/v1/attendance/checkin", json=payload)
+        second = client.post("/api/v1/attendance/checkin", json=payload)
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert first.json()["data"]["action"] == "check_in"
+        assert second.json()["data"]["action"] == "check_in"
+
+        logs = db.query(AttendanceLog).filter(AttendanceLog.employee_id == employee.id).all()
+        assert len(logs) == 1
+        assert logs[0].check_out is None
+        assert db.query(KioskAttendanceEvent).filter(
+            KioskAttendanceEvent.event_id == "evt-test-idempotent"
+        ).count() == 1
+
     def test_checkin_inactive_employee_returns_403(self, client, inactive_employee):
         res = _checkin(client, inactive_employee.id, method="face")
         assert res.status_code == 403

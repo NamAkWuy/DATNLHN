@@ -3,7 +3,7 @@ Các endpoint cho lịch sử chấm công.
 """
 import math
 from datetime import datetime, date
-from app.utils import now_vn, today_vn
+from app.utils import now_vn, VN_TZ
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -13,6 +13,7 @@ from app.api.deps import get_current_admin, get_current_user, success_response
 from app.database import get_db
 from app.models.attendance_log import AttendanceLog
 from app.models.employee import Employee
+from app.models.kiosk_event import KioskAttendanceEvent
 from app.models.user import User
 from app.schemas.attendance import (
     AttendanceListResponse,
@@ -59,6 +60,14 @@ def _log_to_response(log: AttendanceLog) -> AttendanceLogResponse:
         work_hours=work_hours,
         created_at=log.created_at,
     )
+
+
+def _occurred_at_vn(occurred_at: Optional[datetime]) -> datetime:
+    if occurred_at is None:
+        return now_vn()
+    if occurred_at.tzinfo is not None:
+        return occurred_at.astimezone(VN_TZ).replace(tzinfo=None)
+    return occurred_at
 
 
 @router.get("/", response_model=dict)
@@ -153,37 +162,56 @@ def checkin(
         if rfid_card.employee_id != body.employee_id:
             raise HTTPException(status_code=400, detail="Khuôn mặt và thẻ RFID không khớp. Vui lòng thử lại.")
 
-    today = today_vn()
+    event_time = _occurred_at_vn(body.occurred_at)
+    work_date = event_time.date()
+
+    if body.client_event_id:
+        synced_event = (
+            db.query(KioskAttendanceEvent)
+            .filter(KioskAttendanceEvent.event_id == body.client_event_id)
+            .first()
+        )
+        if synced_event:
+            synced_log = (
+                db.query(AttendanceLog)
+                .filter(AttendanceLog.id == synced_event.attendance_log_id)
+                .first()
+            )
+            if synced_log:
+                return success_response(
+                    data={
+                        "action": synced_event.action,
+                        "log": _log_to_response(synced_log).model_dump(),
+                    },
+                    message="Su kien cham cong da duoc dong bo truoc do.",
+                )
+
     existing = (
         db.query(AttendanceLog)
         .filter(
             AttendanceLog.employee_id == body.employee_id,
-            AttendanceLog.date == today,
+            AttendanceLog.date == work_date,
         )
         .first()
     )
 
-    now = now_vn()
-
     if existing is None:
         log = AttendanceLog(
             employee_id=body.employee_id,
-            check_in=now,
+            check_in=event_time,
             method=body.method,
             note=body.note,
-            date=today,
+            date=work_date,
         )
         db.add(log)
-        db.commit()
-        db.refresh(log)
+        db.flush()
         action = "check_in"
         msg = f"Chấm công vào cho {emp.full_name} thành công."
     elif existing.check_out is None:
-        existing.check_out = now
+        existing.check_out = event_time
         if body.note:
             existing.note = body.note
-        db.commit()
-        db.refresh(existing)
+        db.flush()
         log = existing
         action = "check_out"
         msg = f"Chấm công ra cho {emp.full_name} thành công."
@@ -192,6 +220,20 @@ def checkin(
             status_code=400,
             detail="Nhân viên đã chấm công ra hôm nay rồi.",
         )
+
+    if body.client_event_id:
+        db.add(KioskAttendanceEvent(
+            event_id=body.client_event_id,
+            employee_id=body.employee_id,
+            attendance_log_id=log.id,
+            action=action,
+            method=body.method,
+            device_id=body.device_id,
+            occurred_at=event_time,
+        ))
+
+    db.commit()
+    db.refresh(log)
 
     response_data = {
         "action": action,

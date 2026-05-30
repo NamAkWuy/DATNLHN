@@ -291,6 +291,14 @@ def process_rfid(uid: str, frame_bgr, get_latest_frame=None) -> display.ResultOv
         )
 
     error = result.get("error")
+    if error == "queued_offline":
+        logger.warning(f"{emp_name} da duoc luu tam tren kiosk, cho dong bo online.")
+        return display.ResultOverlay(
+            message="Da luu tam cham cong",
+            submessage=f"{emp_name}  •  Se tu dong dong bo khi co mang",
+            success=True,
+            show_until=time.time() + DISPLAY_RESULT_DURATION,
+        )
     if error == "already_checked_out":
         logger.info(f"{emp_name} đã chấm công ra trước đó hôm nay.")
         return display.ResultOverlay(
@@ -409,6 +417,8 @@ def _draw_idle_rfid_prompt(frame):
 # ---------------------------------------------------------------------------
 
 def main():
+    api_client.start_outbox_sync_worker()
+
     src = CAMERA_INDEX
     is_url = isinstance(src, str)
 
@@ -637,6 +647,7 @@ def main():
         cv2.imshow(WINDOW_TITLE, frame)
 
     cap.release()
+    api_client.stop_outbox_sync_worker()
     cv2.destroyAllWindows()
     logger.info("Kiosk đã tắt.")
 

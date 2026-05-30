@@ -10,13 +10,26 @@ Mỗi hàm tương ứng với 1 endpoint backend:
 """
 import base64
 import logging
+import threading
 import time
+import uuid
+from datetime import datetime
 from typing import Optional
 
 import cv2
 import httpx
 
-from config import API_BASE_URL, UPLOAD_WIDTH, UPLOAD_HEIGHT
+from config import (
+    API_BASE_URL,
+    DEVICE_ID,
+    LOCAL_OUTBOX_ENABLED,
+    OUTBOX_BATCH_SIZE,
+    OUTBOX_SYNC_INTERVAL,
+    UPLOAD_WIDTH,
+    UPLOAD_HEIGHT,
+)
+
+import local_store
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +42,9 @@ _client = httpx.Client(
 # Cache token admin để khỏi đăng nhập lại mỗi lần đăng ký khuôn mặt
 _admin_token: Optional[str] = None
 _admin_token_issued_at: float = 0.0
+_sync_stop = threading.Event()
+_sync_thread: Optional[threading.Thread] = None
+_sync_lock = threading.Lock()
 _TOKEN_TTL = 82800.0  # 23 giờ — JWT mặc định hết hạn sau 24h
 
 
@@ -84,6 +100,108 @@ def _post(path: str, payload: dict, headers: dict = None, timeout: float = None)
 # Các API chính dùng tại trạm chấm công
 # ---------------------------------------------------------------------------
 
+def _new_attendance_payload(employee_id: int, method: str, rfid_uid: str = None) -> dict:
+    payload = {
+        "employee_id": employee_id,
+        "method": method,
+        "occurred_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "client_event_id": str(uuid.uuid4()),
+        "device_id": DEVICE_ID,
+    }
+    if rfid_uid:
+        payload["rfid_uid"] = rfid_uid
+    return payload
+
+
+def _post_attendance_payload(payload: dict):
+    return _post("/attendance/checkin", payload, timeout=8.0)
+
+
+def _safe_store_call(fn, *args) -> bool:
+    try:
+        fn(*args)
+        return True
+    except Exception as exc:
+        logger.error(f"Loi ghi SQLite outbox kiosk: {exc}")
+        return False
+
+
+def _handle_attendance_response(status, data, event_id: str,
+                                outbox_saved: bool = True) -> Optional[dict]:
+    if status == 200:
+        if LOCAL_OUTBOX_ENABLED and outbox_saved:
+            _safe_store_call(local_store.mark_synced, event_id)
+        return data
+
+    if status is None or status >= 500:
+        if LOCAL_OUTBOX_ENABLED and outbox_saved:
+            _safe_store_call(
+                local_store.mark_pending,
+                event_id,
+                "network" if status is None else f"http_{status}",
+            )
+            return {"error": "queued_offline", "client_event_id": event_id}
+        return None
+
+    if LOCAL_OUTBOX_ENABLED and outbox_saved:
+        _safe_store_call(local_store.mark_failed, event_id, f"http_{status}")
+
+    if status == 400:
+        return {"error": "already_checked_out"}
+    if status == 403:
+        return {"error": "employee_inactive"}
+    return None
+
+
+def sync_pending_attendance_events() -> int:
+    if not LOCAL_OUTBOX_ENABLED:
+        return 0
+
+    synced = 0
+    with _sync_lock:
+        for item in local_store.pending_events(limit=OUTBOX_BATCH_SIZE):
+            event_id = item["event_id"]
+            payload = item["payload"]
+            local_store.mark_sending(event_id)
+            status, data = _post_attendance_payload(payload)
+            if status == 200:
+                local_store.mark_synced(event_id)
+                synced += 1
+                logger.info(f"Da dong bo su kien cham cong offline: {event_id}")
+            elif status is None or status >= 500:
+                local_store.mark_pending(event_id, "network" if status is None else f"http_{status}")
+            else:
+                local_store.mark_failed(event_id, f"http_{status}")
+                logger.warning(f"Su kien cham cong bi tu choi khi dong bo: {event_id} ({status})")
+    return synced
+
+
+def start_outbox_sync_worker() -> None:
+    global _sync_thread
+    if not LOCAL_OUTBOX_ENABLED:
+        return
+    if _sync_thread and _sync_thread.is_alive():
+        return
+
+    local_store.init_db()
+    _sync_stop.clear()
+
+    def _loop():
+        while not _sync_stop.is_set():
+            try:
+                sync_pending_attendance_events()
+            except Exception as exc:
+                logger.error(f"Loi dong bo outbox kiosk: {exc}")
+            _sync_stop.wait(OUTBOX_SYNC_INTERVAL)
+
+    _sync_thread = threading.Thread(target=_loop, name="attendance-outbox-sync", daemon=True)
+    _sync_thread.start()
+
+
+def stop_outbox_sync_worker() -> None:
+    _sync_stop.set()
+
+
 def recognize_face(frame_bgr) -> Optional[dict]:
     """Nhận diện khuôn mặt 1:N — backend tự tìm xem ảnh là ai."""
     image_base64 = frame_to_base64(frame_bgr)
@@ -113,20 +231,18 @@ def checkin_attendance(employee_id: int, method: str = "face",
         {"action": ..., "log": ...}        — thành công
         {"error": "already_checked_out"}   — đã chấm ra hôm nay (HTTP 400)
         {"error": "employee_inactive"}     — tài khoản bị khóa (HTTP 403)
-        None                               — lỗi mạng / lỗi không xác định
+        {"error": "queued_offline"}        — đã lưu tạm, sẽ đồng bộ lại
+        None                               — lỗi không xác định
     """
-    payload = {"employee_id": employee_id, "method": method}
-    if rfid_uid:
-        payload["rfid_uid"] = rfid_uid
+    payload = _new_attendance_payload(employee_id, method, rfid_uid)
+    event_id = payload["client_event_id"]
 
-    status, data = _post("/attendance/checkin", payload)
-    if status == 200:
-        return data
-    if status == 400:
-        return {"error": "already_checked_out"}
-    if status == 403:
-        return {"error": "employee_inactive"}
-    return None
+    outbox_saved = False
+    if LOCAL_OUTBOX_ENABLED:
+        outbox_saved = _safe_store_call(local_store.save_event, payload, "sending")
+
+    status, data = _post_attendance_payload(payload)
+    return _handle_attendance_response(status, data, event_id, outbox_saved)
 
 
 # ---------------------------------------------------------------------------

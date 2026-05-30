@@ -1,9 +1,28 @@
 """Cấu hình cho trạm chấm công (Kiosk)."""
 
 # ─── Backend ────────────────────────────────────────────────────────────────
-API_BASE_URL = "http://localhost:8000/api/v1"
-WS_URL = "ws://localhost:8000/ws/kiosk"
-DEVICE_ID = "kiosk-001"
+import os
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000/api/v1").rstrip("/")
+WS_URL = os.getenv("WS_URL", "ws://localhost:8000/ws/kiosk")
+DEVICE_ID = os.getenv("DEVICE_ID", "kiosk-001")
+
+# Local outbox: luu su kien cham cong chua dong bo vao SQLite tren may kiosk.
+LOCAL_OUTBOX_ENABLED = _env_bool("LOCAL_OUTBOX_ENABLED", True)
+LOCAL_OUTBOX_DB = os.getenv(
+    "LOCAL_OUTBOX_DB",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "attendance_outbox.sqlite3"),
+)
+OUTBOX_SYNC_INTERVAL = float(os.getenv("OUTBOX_SYNC_INTERVAL", "10"))
+OUTBOX_BATCH_SIZE = int(os.getenv("OUTBOX_BATCH_SIZE", "20"))
 
 # ─── Camera ─────────────────────────────────────────────────────────────────
 # CAMERA_SOURCE — nguồn camera:

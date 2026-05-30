@@ -30,6 +30,9 @@ class CheckInRequest(BaseModel):
     rfid_uid: Optional[str] = None  # UID thẻ RFID (nếu có)
     method: str = "manual"  # "face", "rfid", "manual"
     note: Optional[str] = None
+    occurred_at: Optional[datetime] = None
+    client_event_id: Optional[str] = None
+    device_id: Optional[str] = None
 
 
 class AttendanceLogCreate(BaseModel):

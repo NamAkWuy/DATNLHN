@@ -27,6 +27,6 @@ def get_db():
 def create_tables():
     from app.models import (  # noqa: F401
         department, employee, user, face_encoding,
-        rfid_card, attendance_log, leave_request, notification
+        rfid_card, attendance_log, kiosk_event, leave_request, notification
     )
     Base.metadata.create_all(bind=engine)

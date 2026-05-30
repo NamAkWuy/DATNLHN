@@ -202,6 +202,17 @@ pip install -r requirements.txt
 python main.py
 ```
 
+Kiosk local co the gui thang len backend online bang bien moi truong:
+
+```powershell
+$env:API_BASE_URL="https://<render-backend>.onrender.com/api/v1"
+$env:DEVICE_ID="kiosk-001"
+python main.py
+```
+
+Neu mat ket noi khi ghi cham cong, kiosk se luu tam vao SQLite local
+`kiosk/attendance_outbox.sqlite3` va tu dong dong bo lai khi backend online.
+
 ### Docker (toàn bộ hệ thống)
 ```bash
 docker-compose up -d

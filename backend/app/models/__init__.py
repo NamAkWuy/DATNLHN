@@ -4,6 +4,7 @@ from app.models.user import User
 from app.models.face_encoding import FaceEncoding
 from app.models.rfid_card import RFIDCard
 from app.models.attendance_log import AttendanceLog
+from app.models.kiosk_event import KioskAttendanceEvent
 from app.models.leave_request import LeaveRequest
 from app.models.notification import Notification
 
@@ -14,6 +15,7 @@ __all__ = [
     "FaceEncoding",
     "RFIDCard",
     "AttendanceLog",
+    "KioskAttendanceEvent",
     "LeaveRequest",
     "Notification",
 ]

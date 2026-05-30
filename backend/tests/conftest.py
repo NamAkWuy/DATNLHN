@@ -42,6 +42,7 @@ def setup_database():
     import app.models.face_encoding   # noqa: F401
     import app.models.rfid_card       # noqa: F401
     import app.models.attendance_log  # noqa: F401
+    import app.models.kiosk_event     # noqa: F401
     import app.models.leave_request   # noqa: F401
 
     Base.metadata.create_all(bind=test_engine)

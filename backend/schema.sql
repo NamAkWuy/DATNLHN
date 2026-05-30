@@ -129,7 +129,32 @@ CREATE TABLE IF NOT EXISTS lich_su_cham_cong (
   COMMENT='Lịch sử chấm công vào/ra của nhân viên';
 
 -- -------------------------------------------------------------
--- 7. ĐƠN TỪ (NGHỈ PHÉP, ĐI MUỘN, VỀ SỚM, V.V.)
+-- 6.1. SU KIEN DONG BO TU KIOSK
+-- Luu ma su kien do kiosk tao de retry an toan, tranh ghi trung khi mat mang.
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS su_kien_cham_cong_kiosk (
+    ma_su_kien          INT          NOT NULL AUTO_INCREMENT,
+    ma_su_kien_client   VARCHAR(64)  NOT NULL,
+    ma_nhan_vien        INT          NOT NULL,
+    ma_ban_ghi          INT          NOT NULL,
+    hanh_dong           VARCHAR(20)  NOT NULL COMMENT 'check_in | check_out',
+    phuong_thuc         VARCHAR(20)  NOT NULL,
+    ma_thiet_bi         VARCHAR(100)     NULL,
+    thoi_diem_cham_cong DATETIME     NOT NULL,
+    thoi_diem_dong_bo   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (ma_su_kien),
+    UNIQUE KEY uq_kiosk_event_client (ma_su_kien_client),
+    KEY idx_kiosk_event_employee (ma_nhan_vien),
+    KEY idx_kiosk_event_attendance_log (ma_ban_ghi),
+    CONSTRAINT fk_kiosk_event_nhan_vien
+        FOREIGN KEY (ma_nhan_vien) REFERENCES nhan_vien (ma_nhan_vien) ON DELETE CASCADE,
+    CONSTRAINT fk_kiosk_event_lich_su
+        FOREIGN KEY (ma_ban_ghi) REFERENCES lich_su_cham_cong (ma_ban_ghi) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='Su kien cham cong do kiosk gui len, dung cho idempotency khi dong bo';
+
+-- -------------------------------------------------------------
+-- 7. DON TU
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS don_tu (
     ma_don              INT             NOT NULL AUTO_INCREMENT   COMMENT 'Mã đơn (tự tăng)',
