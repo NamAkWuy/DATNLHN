@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Edit2, Trash2, Search } from 'lucide-react'
+import { Plus, Edit2, Search } from 'lucide-react'
 import { attendanceApi, employeeApi } from '../../services/api'
 import type { AttendanceLog, Employee } from '../../types'
 import PageTitle from '../../components/PageTitle'
@@ -37,7 +37,6 @@ const AttendanceManagement: React.FC = () => {
   const [editLog, setEditLog] = useState<AttendanceLog | null>(null)
   const [form, setForm] = useState<AttendanceForm>(defaultForm)
   const [formErrors, setFormErrors] = useState<Partial<AttendanceForm>>({})
-  const [deleteTarget, setDeleteTarget] = useState<AttendanceLog | null>(null)
 
   const { data: logsData, isLoading } = useQuery({
     queryKey: ['attendance', page, dateFilter, search],
@@ -69,14 +68,6 @@ const AttendanceManagement: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attendance'] })
       closeModal()
-    },
-  })
-
-  const deleteMutation = useMutation({
-    mutationFn: attendanceApi.delete,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['attendance'] })
-      setDeleteTarget(null)
     },
   })
 
@@ -253,12 +244,6 @@ const AttendanceManagement: React.FC = () => {
                           >
                             <Edit2 size={15} />
                           </button>
-                          <button
-                            onClick={() => setDeleteTarget(log)}
-                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg"
-                          >
-                            <Trash2 size={15} />
-                          </button>
                         </div>
                       </td>
                     </tr>
@@ -366,32 +351,6 @@ const AttendanceManagement: React.FC = () => {
             </div>
           )}
         </div>
-      </Modal>
-
-      {/* Delete Confirm */}
-      <Modal
-        isOpen={!!deleteTarget}
-        onClose={() => setDeleteTarget(null)}
-        title="Xóa bản ghi chấm công"
-        size="sm"
-        footer={
-          <>
-            <button onClick={() => setDeleteTarget(null)} className="btn-secondary">Hủy</button>
-            <button
-              onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
-              disabled={deleteMutation.isPending}
-              className="btn-danger"
-            >
-              {deleteMutation.isPending ? <LoadingSpinner size="sm" /> : 'Xóa'}
-            </button>
-          </>
-        }
-      >
-        <p className="text-gray-600">
-          Xóa bản ghi chấm công của{' '}
-          <strong>{deleteTarget?.employee?.full_name || `NV#${deleteTarget?.employee_id}`}</strong> ngày{' '}
-          {deleteTarget ? format(new Date(deleteTarget.date), 'dd/MM/yyyy') : ''}?
-        </p>
       </Modal>
     </div>
   )

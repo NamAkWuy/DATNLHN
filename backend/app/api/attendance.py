@@ -306,18 +306,3 @@ def update_attendance(
     db.commit()
     db.refresh(log)
     return success_response(data=_log_to_response(log).model_dump(), message="Cập nhật bản ghi chấm công thành công.")
-
-
-@router.delete("/{log_id}", response_model=dict)
-def delete_attendance(
-    log_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin),
-):
-    log = db.query(AttendanceLog).filter(AttendanceLog.id == log_id).first()
-    if not log:
-        raise HTTPException(status_code=404, detail="Không tìm thấy bản ghi chấm công.")
-
-    db.delete(log)
-    db.commit()
-    return success_response(message="Xóa bản ghi chấm công thành công.")
