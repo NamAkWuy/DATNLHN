@@ -266,6 +266,10 @@ export const attendanceApi = {
     const res = await api.put<ApiResponse<AttendanceLog>>(`/attendance/${id}`, data)
     return res.data
   },
+  delete: async (id: number) => {
+    const res = await api.delete<ApiResponse<null>>(`/attendance/${id}`)
+    return res.data
+  },
 }
 
 // ─── Đơn từ ─────────────────────────────────────────────────────────────────
