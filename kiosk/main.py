@@ -25,13 +25,20 @@ import api_client
 import display
 from config import (
     CAMERA_INDEX, CAMERA_BACKEND, FRAME_WIDTH, FRAME_HEIGHT,
-    FRAME_FPS, CAMERA_FOURCC, DETECT_WIDTH,
+    FRAME_FPS, CAMERA_FOURCC, CAMERA_ROTATE, DETECT_WIDTH,
     DISPLAY_RESULT_DURATION,
     RFID_ENABLED, RFID_AUTO_SUBMIT_TIMEOUT, WINDOW_TITLE,
-    VERIFY_SHOTS, VERIFY_SHOT_INTERVAL,
+    VERIFY_SHOTS, VERIFY_SHOT_INTERVAL, VERIFY_QUALITY_RETRIES,
     BURST_FRAMES, BURST_INTERVAL,
     ENROLL_POSES, ENROLL_POSE_INTERVAL,
 )
+
+
+_ROTATE_MAP = {
+    90:  cv2.ROTATE_90_CLOCKWISE,
+    180: cv2.ROTATE_180,
+    270: cv2.ROTATE_90_COUNTERCLOCKWISE,
+}
 
 
 _BACKEND_MAP = {
@@ -218,18 +225,46 @@ def process_rfid(uid: str, frame_bgr, get_latest_frame=None) -> display.ResultOv
             if seed is None:
                 seed = frame_bgr
 
-        shot_frame = _pick_sharpest_frame(get_latest_frame, seed_frame=seed) \
-            if get_latest_frame else seed
+        # Inner retry CHỈ cho lỗi chất lượng (frame mờ/tối/quá nhỏ): burst lại
+        # frame mới rồi gọi backend, tránh user phải quẹt thẻ lại chỉ vì 1
+        # frame xấu. Các lỗi khác (no-face, no-match, network) vẫn fail-fast
+        # vì retry không giải quyết được — cần user thao tác lại.
+        verify = None
+        for attempt in range(VERIFY_QUALITY_RETRIES + 1):
+            if attempt > 0 and get_latest_frame:
+                fresh = get_latest_frame()
+                if fresh is not None:
+                    seed = fresh
 
-        logger.info(f"Lần chụp {shot_idx + 1}/{VERIFY_SHOTS} cho {emp_name}...")
-        verify = api_client.verify_face(emp_id, shot_frame)
+            shot_frame = _pick_sharpest_frame(get_latest_frame, seed_frame=seed) \
+                if get_latest_frame else seed
 
-        if verify is None:
-            return display.ResultOverlay(
-                message="Lỗi kết nối máy chủ",
-                submessage=f"{emp_name}  •  Vui lòng thử lại",
-                success=False,
-                show_until=time.time() + DISPLAY_RESULT_DURATION,
+            attempt_tag = f" (retry {attempt})" if attempt else ""
+            logger.info(
+                f"Lần chụp {shot_idx + 1}/{VERIFY_SHOTS} cho {emp_name}{attempt_tag}..."
+            )
+            verify = api_client.verify_face(emp_id, shot_frame)
+
+            if verify is None:
+                return display.ResultOverlay(
+                    message="Lỗi kết nối máy chủ",
+                    submessage=f"{emp_name}  •  Vui lòng thử lại",
+                    success=False,
+                    show_until=time.time() + DISPLAY_RESULT_DURATION,
+                )
+
+            # Quality fail = backend phát hiện được mặt nhưng từ chối embed
+            # (mờ/tối/nhỏ) → vẫn còn cơ hội cứu với frame khác.
+            is_quality_fail = (
+                verify.get("has_face", False)
+                and verify.get("error")
+                and not verify.get("match", False)
+            )
+            if not is_quality_fail:
+                break
+            logger.info(
+                f"  Retry {attempt + 1}/{VERIFY_QUALITY_RETRIES} "
+                f"do quality fail: {verify.get('error', '')[:50]}"
             )
 
         has_face   = verify.get("has_face", False)
@@ -476,8 +511,16 @@ def main():
 
     detector = load_face_detector()
 
-    cv2.namedWindow(WINDOW_TITLE, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(WINDOW_TITLE, actual_w or FRAME_WIDTH, actual_h or FRAME_HEIGHT)
+    # WINDOW_KEEPRATIO: khi kéo cửa sổ, OpenCV thêm letterbox đen hai bên
+    # thay vì stretch ảnh → khuôn mặt không bị méo dù tỉ lệ cửa sổ khác tỉ
+    # lệ frame gốc.
+    cv2.namedWindow(WINDOW_TITLE, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+    # Kích thước mặc định theo hướng frame sau khi xoay: dọc dùng 9:16,
+    # ngang (mặc định, không xoay) dùng 16:9 — vừa laptop 1080p.
+    if CAMERA_ROTATE in (90, 270):
+        cv2.resizeWindow(WINDOW_TITLE, 540, 960)   # dọc
+    else:
+        cv2.resizeWindow(WINDOW_TITLE, 1600, 900)  # ngang
 
     # --- Trạng thái ---
     current_overlay: display.ResultOverlay | None = None
@@ -524,6 +567,13 @@ def main():
         if not ret:
             time.sleep(0.05)
             continue
+
+        # Xoay frame ngay sau khi đọc — mọi xử lý downstream (detect, burst,
+        # gửi backend, hiển thị) đều thấy frame đã ở đúng chiều, không cần
+        # quan tâm camera gốc nằm ngang/dọc.
+        rotate_code = _ROTATE_MAP.get(CAMERA_ROTATE)
+        if rotate_code is not None:
+            frame = cv2.rotate(frame, rotate_code)
 
         # Cập nhật latest_frame để luồng xác thực có thể đọc lần chụp mới sau interval
         with latest_frame_lock:

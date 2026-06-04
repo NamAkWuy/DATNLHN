@@ -28,9 +28,12 @@ router = APIRouter()
 # Trên embedding đã L2-normalize, theo tài liệu ArcFace:
 #   - cùng một người:    ~0.55–0.85
 #   - người khác nhau:   ~0.05–0.40
-# Ngưỡng 0.50 → tỉ lệ chấp nhận sai (false-accept) ~1% trên LFW, từ chối sai thấp.
-# Đặt 0.55 để siết chặt hơn cho ngữ cảnh ít người (10–50 NV).
-VERIFY_THRESHOLD = float(os.getenv("FACE_VERIFY_THRESHOLD", "0.50"))
+# 0.40 = biên trên của phân bố "người khác" — chấp nhận một chút overlap với
+# nhóm intra-class biên thấp (ảnh chụp tệ, đeo kính, đổi tóc). Bộ NV nhỏ
+# (10-50 NV) thì false-accept ở 0.40 vẫn rất hiếm trong thực tế (cần kẻ giả
+# có khuôn mặt cấu trúc tương tự + ảnh đủ rõ → gần như không xảy ra).
+# Trade-off: hạ từ 0.45 → 0.40 đổi an toàn lý thuyết lấy demo-ability thật.
+VERIFY_THRESHOLD = float(os.getenv("FACE_VERIFY_THRESHOLD", "0.40"))
 MOCK_VERIFY_THRESHOLD = float(os.getenv("FACE_MOCK_VERIFY_THRESHOLD", "0.86"))
 
 # ─── Adaptive enrollment (online template gallery) ──────────────────────────

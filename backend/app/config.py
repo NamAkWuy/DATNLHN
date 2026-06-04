@@ -20,7 +20,13 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        # Cho phép env vars khác (vd: GROQ_API_KEY cho chatbot) tồn tại trong
+        # .env mà Settings chưa khai báo — không crash khi load.
+        "extra": "ignore",
+    }
 
 
 settings = Settings()

@@ -69,14 +69,17 @@ def _decode_image_bytes(image_bytes: bytes):
     return img
 
 
-_MIN_FACE_AREA_RATIO = 0.02   # khuôn mặt phải chiếm >=2% diện tích ảnh
-# Ngưỡng đã được nới sau khi pipeline có thêm bước _enhance_face_region (CLAHE +
-# unsharp mask) — phần lớn ảnh thiếu sáng / mờ nhẹ giờ tự cứu được, không cần
-# reject sớm. Chỉ giữ ngưỡng để chặn các trường hợp cực đoan (ảnh gần như đen,
-# mặt quá nhỏ để align landmark).
-_MIN_FACE_SIZE_PX    = 50     # cạnh ngắn nhất bbox >= 50px — đủ để MTCNN align landmark
-_MIN_BLUR_VAR        = 15.0   # variance Laplacian — chỉ reject ảnh mờ nặng (rung tay, lia camera)
-_MIN_BRIGHTNESS      = 20     # CLAHE sau đó sẽ kéo brightness lên — ngưỡng này chỉ chặn ảnh gần như đen
+# Ngưỡng đã nới mạnh sau khi (1) pipeline có thêm _enhance_face_region (CLAHE
+# + unsharp mask) tự cứu được ảnh thiếu sáng/mờ nhẹ, và (2) kiosk pre-crop
+# face trước khi upload nên backend luôn nhận frame mà face dominate. Quality
+# gate hiện chỉ chặn các trường hợp cực đoan (ảnh đen, mặt rất nhỏ, mờ nặng).
+# Nới gates → giảm mạnh false-reject ở tình huống điểm danh thực tế (đứng hơi
+# xa, đèn không lý tưởng), false-accept không tăng vì còn 2 lớp bảo vệ phía
+# sau (MTCNN align + cosine threshold).
+_MIN_FACE_AREA_RATIO = 0.008  # khuôn mặt >= 0.8% diện tích ảnh (nới từ 2%)
+_MIN_FACE_SIZE_PX    = 35     # cạnh ngắn nhất bbox >= 35px (nới từ 50px)
+_MIN_BLUR_VAR        = 8.0    # variance Laplacian — chỉ reject ảnh mờ rất nặng (nới từ 15)
+_MIN_BRIGHTNESS      = 15     # gần như đen mới reject (nới từ 20, CLAHE sẽ kéo lên sau)
 _MAX_BRIGHTNESS      = 245    # gần trắng hoàn toàn — quá cháy sáng, không cứu được
 
 

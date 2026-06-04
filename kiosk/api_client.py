@@ -9,6 +9,8 @@ Mỗi hàm tương ứng với 1 endpoint backend:
 """
 import base64
 import logging
+import os
+import sys
 import threading
 import time
 import uuid
@@ -69,6 +71,119 @@ def frame_to_base64(frame_bgr) -> str:
     cropped = resized[y_off:y_off + target_h, x_off:x_off + target_w]
 
     _, buffer = cv2.imencode(".jpg", cropped, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    return base64.b64encode(buffer.tobytes()).decode("utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Pre-crop khuôn mặt (tối ưu hoá embedding ArcFace)
+# ---------------------------------------------------------------------------
+
+_FACE_DETECTOR: Optional[cv2.CascadeClassifier] = None
+
+
+def _ascii_safe_path(path: str) -> str:
+    """Workaround OpenCV không đọc được path Unicode trên Windows (ký tự Đ).
+    Trả về Windows 8.3 short-name nếu path chứa non-ASCII."""
+    if path.isascii() or sys.platform != "win32":
+        return path
+    try:
+        import ctypes
+        from ctypes import wintypes
+        GetShortPathNameW = ctypes.windll.kernel32.GetShortPathNameW
+        GetShortPathNameW.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+        GetShortPathNameW.restype = wintypes.DWORD
+        buf = ctypes.create_unicode_buffer(260)
+        n = GetShortPathNameW(path, buf, 260)
+        if n and buf.value.isascii():
+            return buf.value
+    except Exception:
+        pass
+    return path
+
+
+def _get_face_detector():
+    """Lazy-load Haar cascade dùng để pre-crop face trước khi upload."""
+    global _FACE_DETECTOR
+    if _FACE_DETECTOR is not None:
+        return _FACE_DETECTOR
+    cascade_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "haarcascade_frontalface_default.xml",
+    )
+    if not os.path.exists(cascade_path):
+        cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    det = cv2.CascadeClassifier(_ascii_safe_path(cascade_path))
+    if det.empty():
+        logger.warning("Không load được Haar cascade cho pre-crop — sẽ gửi nguyên frame.")
+        return None
+    _FACE_DETECTOR = det
+    return det
+
+
+def _crop_face_for_upload(frame_bgr, padding_ratio: float = 0.6):
+    """
+    Tìm khuôn mặt lớn nhất trong frame rồi crop kèm padding rộng để gửi backend.
+
+    Vì sao quan trọng:
+      Backend nhận frame 1280×720 → Haar detect face ~200×200 px → MTCNN
+      chỉ có 200²=40K pixel khuôn mặt để align landmark. Sau khi resize về
+      112×112 cho ArcFace, mỗi pixel input mặt = ~3×3 pixel gốc → mất chi
+      tiết. Pre-crop ở kiosk (face ~400×400 px chiếm phần lớn upload) →
+      MTCNN có nhiều pixel hơn để align chuẩn → embedding ổn định hơn rõ
+      rệt (+0.05-0.10 cosine với cùng người).
+
+    Padding 60%: đủ context xung quanh (tóc, vai) cho MTCNN re-detect và
+    align landmark; chặt hơn nữa thì MTCNN dễ fail vì không có khoảng đệm.
+
+    Fallback: không detect được mặt → trả nguyên frame gốc, backend tự xử.
+    """
+    det = _get_face_detector()
+    if det is None:
+        return frame_bgr
+
+    h_full, w_full = frame_bgr.shape[:2]
+    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+    faces = det.detectMultiScale(
+        gray, scaleFactor=1.1, minNeighbors=4, minSize=(60, 60)
+    )
+    if len(faces) == 0:
+        return frame_bgr
+
+    # Mặt lớn nhất = mặt gần camera nhất = subject muốn verify
+    x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
+    pad_w = int(w * padding_ratio)
+    pad_h = int(h * padding_ratio)
+    x1 = max(0, x - pad_w)
+    y1 = max(0, y - pad_h)
+    x2 = min(w_full, x + w + pad_w)
+    y2 = min(h_full, y + h + pad_h)
+    return frame_bgr[y1:y2, x1:x2]
+
+
+def face_crop_to_base64(frame_bgr, jpeg_quality: int = 92) -> str:
+    """
+    Pre-crop khuôn mặt + encode JPEG chất lượng cao cho verify/register.
+
+    Khác frame_to_base64:
+      - Crop quanh face thay vì center-crop fix size → face dominate upload
+      - JPEG q=92 (vs 85) → giữ chi tiết da/mắt cho ArcFace (artifact JPEG
+        có thể làm tụt cosine ~0.02-0.04)
+      - Cap kích thước 1024px cạnh dài để tránh payload quá lớn
+
+    Fallback: nếu local detector miss → dùng frame_to_base64 (path cũ).
+    """
+    crop = _crop_face_for_upload(frame_bgr)
+    if crop is frame_bgr:
+        return frame_to_base64(frame_bgr)
+
+    h, w = crop.shape[:2]
+    max_dim = 1024
+    if max(h, w) > max_dim:
+        scale = max_dim / max(h, w)
+        crop = cv2.resize(crop, (int(w * scale), int(h * scale)),
+                          interpolation=cv2.INTER_AREA)
+
+    _, buffer = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
     return base64.b64encode(buffer.tobytes()).decode("utf-8")
 
 
@@ -203,7 +318,7 @@ def stop_outbox_sync_worker() -> None:
 
 def verify_face(employee_id: int, frame_bgr) -> Optional[dict]:
     """Xác thực khuôn mặt 1:1 — so ảnh với encoding của 1 nhân viên cụ thể."""
-    image_base64 = frame_to_base64(frame_bgr)
+    image_base64 = face_crop_to_base64(frame_bgr)
     _, data = _post(f"/face/verify/{employee_id}", {"image_base64": image_base64})
     return data
 
@@ -283,9 +398,11 @@ def register_face_from_kiosk(
         logger.error("Không thể lấy admin token để đăng ký khuôn mặt.")
         return None
 
-    payload = {"image_base64": frame_to_base64(frame_bgr)}
+    # Enroll cũng pre-crop face + JPEG q=92 — gallery template chất lượng cao
+    # ngay từ đầu sẽ giúp mọi lần verify sau dễ match hơn rõ rệt.
+    payload = {"image_base64": face_crop_to_base64(frame_bgr)}
     if extra_frames:
-        payload["extra_images"] = [frame_to_base64(f) for f in extra_frames]
+        payload["extra_images"] = [face_crop_to_base64(f) for f in extra_frames]
 
     # Multi-pose enrollment có thể tốn vài giây để extract embedding cho từng
     # ảnh extra (mỗi ảnh ~0.5-1s với MTCNN+ArcFace), tăng timeout cho an toàn.
