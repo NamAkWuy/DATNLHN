@@ -5,7 +5,6 @@ import { attendanceApi, employeeApi } from '../../services/api'
 import type { AttendanceLog, Employee } from '../../types'
 import PageTitle from '../../components/PageTitle'
 import Modal from '../../components/Modal'
-import StatusBadge from '../../components/StatusBadge'
 import LoadingSpinner from '../../components/LoadingSpinner'
 import Pagination from '../../components/Pagination'
 import { format } from 'date-fns'
@@ -204,7 +203,6 @@ const AttendanceManagement: React.FC = () => {
                   <th className="table-header">Ngày</th>
                   <th className="table-header">Giờ vào</th>
                   <th className="table-header">Giờ ra</th>
-                  <th className="table-header">Phương thức</th>
                   <th className="table-header">Số giờ</th>
                   <th className="table-header">Ghi chú</th>
                   <th className="table-header text-right">Thao tác</th>
@@ -213,7 +211,7 @@ const AttendanceManagement: React.FC = () => {
               <tbody className="divide-y divide-gray-100">
                 {logs.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="py-12 text-center text-gray-400 text-sm">
+                    <td colSpan={7} className="py-12 text-center text-gray-400 text-sm">
                       Không có dữ liệu chấm công
                     </td>
                   </tr>
@@ -231,9 +229,6 @@ const AttendanceManagement: React.FC = () => {
                       </td>
                       <td className="table-cell text-gray-700">
                         {log.check_out ? format(new Date(log.check_out), 'HH:mm') : '—'}
-                      </td>
-                      <td className="table-cell">
-                        <StatusBadge status={log.method} />
                       </td>
                       <td className="table-cell">
                         {log.work_hours != null ? (
