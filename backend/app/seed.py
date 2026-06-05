@@ -37,7 +37,7 @@ def run_seed(db: Session) -> None:
     from app.models.leave_request import LeaveRequest
     from app.models.notification import Notification
 
-    logger.info("Running database seed (additive mode)...")
+    logger.info("Running database seed v2 (additive mode)...")
     rng = random.Random(42)
 
     extra_already_seeded = (
