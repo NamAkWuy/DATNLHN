@@ -82,6 +82,19 @@ _MIN_BLUR_VAR        = 8.0    # variance Laplacian — chỉ reject ảnh mờ r
 _MIN_BRIGHTNESS      = 15     # gần như đen mới reject (nới từ 20, CLAHE sẽ kéo lên sau)
 _MAX_BRIGHTNESS      = 245    # gần trắng hoàn toàn — quá cháy sáng, không cứu được
 
+# Ngưỡng để QUYẾT ĐỊNH có cần enhance hay không. Trên các ngưỡng này, ảnh đã
+# đủ tốt cho ArcFace — CLAHE/unsharp chỉ thêm variance không cần thiết và làm
+# embedding kém ổn định giữa các frame của cùng một người.
+_ENHANCE_BRIGHTNESS_THRESHOLD = 70   # mean grayscale của face crop
+_ENHANCE_BLUR_THRESHOLD       = 40   # Laplacian variance của face crop
+
+# Padding quanh bbox Haar khi cắt vùng face để gửi MTCNN. Kiosk đã pre-crop
+# với pad 60% (api_client._crop_face_for_upload) → backend không cần pad to
+# nữa. Pad nhỏ → MTCNN crop về 112×112 chứa ít pixel nền/áo → ArcFace embedding
+# bám sát đặc trưng KHUÔN MẶT, không bị bối cảnh kéo lệch khi user đổi áo /
+# đổi background / vuốt tóc làm thay đổi vùng quanh mặt.
+_FACE_CROP_PADDING_RATIO = 0.20
+
 
 def _quality_check(face_crop_gray) -> str | None:
     """
@@ -227,20 +240,28 @@ def mock_encoding_for_employee(employee_id: int) -> list[float]:
 
 
 def extract_face_encoding(image_bytes: bytes) -> list[float]:
+    """Thin wrapper trả về encoding list — dùng cho register/test/back-compat.
+
+    Verify endpoint nên gọi `extract_face_with_meta_from_base64` để lấy thêm
+    quality metrics (brightness, blur_var) phục vụ adaptive-learning 2-tier.
     """
-    Trích xuất vector đặc trưng khuôn mặt từ bytes ảnh.
+    return _extract_face_full(image_bytes)["encoding"]
 
-    Pipeline:
-      1. Haar cascade — kiểm tra ảnh có khuôn mặt (chặn đăng ký ảnh không có mặt).
-      2. Crop vùng mặt + padding rộng (50%) để có context cho MTCNN.
-      3. DeepFace với model ArcFace + detector MTCNN (tự align theo điểm mắt/mũi).
-         Đây là điểm then chốt: KHÔNG dùng `detector_backend="skip"` nữa vì
-         skip = không align → embedding bị ảnh hưởng bởi framing/lighting hơn
-         là đặc điểm khuôn mặt → false positive giữa người khác nhau.
-      4. L2-normalize vector — cosine similarity ổn định, threshold rõ ràng.
 
-    Mock mode (DeepFace không có): vẫn dùng embedding pixel-based để demo,
-    threshold sẽ siết chặt riêng cho mode này.
+def _extract_face_full(image_bytes: bytes) -> dict:
+    """
+    Pipeline đầy đủ: detect → quality check → enhance → ArcFace embedding.
+
+    Trả về dict gồm:
+      - encoding:    list[float], 512-D nếu DeepFace có, 128-D nếu mock
+      - brightness:  mean grayscale của vùng mặt chặt (15–245 sau quality gate)
+      - blur_var:    Laplacian variance — proxy độ nét
+      - face_size_px: cạnh ngắn nhất bbox Haar — proxy khoảng cách camera
+
+    Quality metrics dùng để:
+      • quyết định có cần enhance hay không (đã có)
+      • quyết định adapt tier (mới — verify endpoint phân loại frame "easy" /
+        "hard" / "reject" để biết có nên học vào gallery hay không)
     """
     import cv2  # type: ignore
     bbox = detect_face_bbox(image_bytes)
@@ -265,21 +286,54 @@ def extract_face_encoding(image_bytes: bytes) -> list[float]:
     if quality_err:
         raise ValueError(quality_err)
 
+    # Tính brightness/blur một lần duy nhất, dùng chung cho enhance decision
+    # và adapt-tier decision phía verify endpoint.
+    brightness = float(face_gray.mean())
+    blur_var = float(cv2.Laplacian(face_gray, cv2.CV_64F).var())
+    face_size_px = int(min(h, w))
+
     if DEEPFACE_AVAILABLE:
-        # Padding 50% — MTCNN cần thấy đủ vùng quanh mặt để align chuẩn.
-        pad = int(0.50 * max(w, h))
+        # ── Enhance có điều kiện, chỉ trên vùng MẶT (không gồm padding) ─────
+        # Vì sao:
+        #   1. Nếu ảnh đã đủ sáng/nét → SKIP CLAHE+unsharp. Áp dụng enhance
+        #      lên frame chất lượng tốt chỉ thêm variance giữa các lần verify
+        #      (mỗi frame có nhiễu khác nhau → LUT khác nhau → embedding lệch
+        #      nhẹ). Demo conditions thường rơi vào nhánh skip này → embedding
+        #      ổn định, cosine match cao.
+        #   2. Nếu cần enhance (ảnh tối/mờ thật) → áp dụng CHỈ trên crop chặt
+        #      face_only (không bao padding). Trước đây CLAHE chạy trên crop
+        #      đã pad 50% (gồm cả background + áo) → tile histogram bị driven
+        #      bởi pixel ngoài khuôn mặt → LUT của tile mặt phụ thuộc vào bối
+        #      cảnh → user đổi áo/background → cùng khuôn mặt cho ra embedding
+        #      khác. Apply CLAHE trên tight face thì LUT chỉ học từ pixel da
+        #      khuôn mặt, hoàn toàn bất biến với mọi thay đổi bên ngoài.
+        needs_enhance = (
+            brightness < _ENHANCE_BRIGHTNESS_THRESHOLD
+            or blur_var < _ENHANCE_BLUR_THRESHOLD
+        )
+        face_tight = _enhance_face_region(face_only) if needs_enhance else face_only
+
+        # Padding nhỏ (20%) — kiosk đã pre-crop pad 60% rồi nên backend không
+        # cần pad to nữa. Pad nhỏ → MTCNN crop tới 112x112 chứa nhiều pixel
+        # mặt hơn, ít pixel nền/áo hơn → ArcFace embedding tập trung vào đặc
+        # trưng khuôn mặt thật (mắt, mũi, miệng, cấu trúc xương), giảm tối đa
+        # ảnh hưởng của bối cảnh.
+        pad = int(_FACE_CROP_PADDING_RATIO * max(w, h))
         x1 = max(0, x - pad)
         y1 = max(0, y - pad)
         x2 = min(img_array.shape[1], x + w + pad)
         y2 = min(img_array.shape[0], y + h + pad)
-        face_crop = img_array[y1:y2, x1:x2]
+        if needs_enhance:
+            # Ghép vùng mặt đã enhance vào đúng vị trí trong crop có padding.
+            # Pixel padding xung quanh là pixel gốc — MTCNN dùng để tìm
+            # landmarks; pixel mặt là đã được enhance để bù sáng/nét.
+            face_crop = img_array[y1:y2, x1:x2].copy()
+            fx, fy = x - x1, y - y1
+            face_crop[fy:fy + h, fx:fx + w] = face_tight
+        else:
+            face_crop = img_array[y1:y2, x1:x2]
         if face_crop.size == 0:
             raise ValueError("Vùng khuôn mặt rỗng sau khi crop.")
-
-        # Cứu ảnh thiếu sáng / mờ nhẹ trước khi đưa vào MTCNN+ArcFace.
-        # Phải làm SAU khi crop có padding (để CLAHE có context xung quanh mặt
-        # mà cân bằng tương phản), TRƯỚC khi DeepFace tự align về 112×112.
-        face_crop = _enhance_face_region(face_crop)
 
         try:
             # MTCNN tự detect lại + align mặt theo landmark (mắt, mũi, miệng).
@@ -302,7 +356,12 @@ def extract_face_encoding(image_bytes: bytes) -> list[float]:
             if norm == 0.0:
                 raise ValueError("Embedding rỗng.")
             emb = emb / norm
-            return emb.tolist()
+            return {
+                "encoding": emb.tolist(),
+                "brightness": brightness,
+                "blur_var": blur_var,
+                "face_size_px": face_size_px,
+            }
         except ValueError:
             raise
         except Exception as e:
@@ -310,8 +369,8 @@ def extract_face_encoding(image_bytes: bytes) -> list[float]:
             # Fallback sang opencv detector của DeepFace để vẫn có cơ hội nhận diện.
             logger.warning(f"MTCNN/ArcFace lỗi, dùng detector opencv thay thế: {e}")
             try:
-                # face_crop ở đây đã được enhance rồi (lệnh _enhance_face_region
-                # ở trên chạy trước try/except), không cần enhance lại.
+                # face_crop đã chứa face_tight (raw hoặc đã enhance tùy needs_enhance)
+                # ở đúng vị trí — không cần xử lý gì thêm.
                 results = DeepFace.represent(
                     img_path=face_crop,
                     model_name="ArcFace",
@@ -327,7 +386,12 @@ def extract_face_encoding(image_bytes: bytes) -> list[float]:
                 if norm == 0.0:
                     raise ValueError("Embedding rỗng.")
                 emb = emb / norm
-                return emb.tolist()
+                return {
+                    "encoding": emb.tolist(),
+                    "brightness": brightness,
+                    "blur_var": blur_var,
+                    "face_size_px": face_size_px,
+                }
             except Exception as e2:
                 logger.error(f"Trích xuất ArcFace thất bại (cả 2 detector): {e2}")
                 raise ValueError(
@@ -335,22 +399,36 @@ def extract_face_encoding(image_bytes: bytes) -> list[float]:
                     "ánh sáng đầy đủ, không đeo khẩu trang/kính râm."
                 )
 
-    return _mock_embedding_from_face(img_array, bbox)
+    return {
+        "encoding": _mock_embedding_from_face(img_array, bbox),
+        "brightness": brightness,
+        "blur_var": blur_var,
+        "face_size_px": face_size_px,
+    }
+
+
+def _b64_to_bytes(image_base64: str) -> bytes:
+    """Giải mã base64 (có/không có data URI prefix) sang bytes ảnh thô."""
+    import base64
+    if "," in image_base64:
+        image_base64 = image_base64.split(",", 1)[1]
+    return base64.b64decode(image_base64)
 
 
 def extract_face_encoding_from_base64(image_base64: str) -> list[float]:
-    """
-    Nhận chuỗi ảnh dạng base64 (có hoặc không có data URI prefix),
-    giải mã rồi trích xuất embedding khuôn mặt.
-    """
-    import base64
+    """Backward-compat: trả encoding list. Verify endpoint dùng `_with_meta` ở dưới."""
+    return extract_face_encoding(_b64_to_bytes(image_base64))
 
-    # Bỏ data URI prefix nếu có (vd: "data:image/jpeg;base64,...")
-    if "," in image_base64:
-        image_base64 = image_base64.split(",", 1)[1]
 
-    image_bytes = base64.b64decode(image_base64)
-    return extract_face_encoding(image_bytes)
+def extract_face_with_meta_from_base64(image_base64: str) -> dict:
+    """
+    Trả về dict {encoding, brightness, blur_var, face_size_px}.
+
+    Verify endpoint dùng hàm này (thay vì `extract_face_encoding_from_base64`)
+    để có đủ thông tin chất lượng frame phục vụ quyết định adaptive learning
+    2-tier — xem `_decide_adapt_tier` trong [app/api/face.py].
+    """
+    return _extract_face_full(_b64_to_bytes(image_base64))
 
 
 def cosine_similarity(vec1: list[float], vec2: list[float]) -> float:

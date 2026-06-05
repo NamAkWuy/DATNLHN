@@ -19,6 +19,7 @@ from app.services.face_service import (
     DEEPFACE_AVAILABLE,
     cosine_similarity,
     extract_face_encoding_from_base64,
+    extract_face_with_meta_from_base64,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,8 +52,28 @@ MOCK_VERIFY_THRESHOLD = float(os.getenv("FACE_MOCK_VERIFY_THRESHOLD", "0.86"))
 # seed ra — mà seed đa pose là tài sản quý nhất → mất diversity.
 MAX_GALLERY_SIZE       = 8
 ENROLL_RESERVED_SLOTS  = 3   # số slot LUÔN để trống lúc đăng ký, dành cho adaptive evolution
-ADAPT_SIMILARITY       = 0.70   # ngưỡng "rất chắc chắn" để được đưa vào gallery
+ADAPT_SIMILARITY       = 0.70   # ngưỡng "rất chắc chắn" để được đưa vào gallery (tier EASY)
 MOCK_ADAPT_SIMILARITY  = 0.95
+
+# ─── Adaptive 2-tier (học từ frame "khó" — điều kiện khắc nghiệt) ───────────
+# Mục tiêu: khi user đến trong điều kiện khó (ánh sáng kém, góc nghiêng nhẹ,
+# đổi diện mạo dần…), cosine match có thể chỉ ~0.60–0.70 — VẪN xác thực được
+# nhưng nếu không học vào gallery thì lần sau gặp đúng điều kiện đó lại fail.
+# Tier HARD học chính những frame này để gallery "tiến hóa" theo điều kiện
+# thực tế của user, không chỉ giữ baseline ngày đăng ký.
+#
+# Safeguards (để không phá gallery khi cosine sát ngưỡng verify):
+#   • Quality gate stricter — frame phải đủ dùng được, không quá tối/mờ
+#   • Diversity gate — embedding mới phải mang thông tin mới so với gallery
+#     (max cosine đến template hiện có < DIVERSITY_MAX_SIM)
+#   • Rate limit hàng ngày — mỗi user tối đa MAX_DAILY_HARD_ADAPTS frame
+#     tier-HARD/ngày, chống case kẻ giả mạo lọt verify rồi spam adapt
+ADAPT_SIMILARITY_HARD          = 0.60
+HARD_ADAPT_MIN_BRIGHTNESS      = 50.0
+HARD_ADAPT_MAX_BRIGHTNESS      = 220.0
+HARD_ADAPT_MIN_BLUR_VAR        = 30.0
+HARD_ADAPT_DIVERSITY_MAX_SIM   = 0.90  # max cosine cho phép với template gần nhất
+HARD_ADAPT_DAILY_LIMIT         = 2
 
 
 def _current_source() -> str:
@@ -245,7 +266,7 @@ def verify_face_for_employee(
         )
 
     try:
-        query_encoding = extract_face_encoding_from_base64(body.image_base64)
+        query_meta = extract_face_with_meta_from_base64(body.image_base64)
     except ValueError as e:
         return success_response(
             data={
@@ -256,6 +277,9 @@ def verify_face_for_employee(
                 "error": str(e),
             }
         )
+    query_encoding = query_meta["encoding"]
+    query_brightness = query_meta["brightness"]
+    query_blur_var = query_meta["blur_var"]
 
     from app.services.face_service import cosine_similarity
 
@@ -264,9 +288,12 @@ def verify_face_for_employee(
     adapt_threshold = ADAPT_SIMILARITY if current == "arcface_mtcnn_v1" else MOCK_ADAPT_SIMILARITY
 
     # ── So khớp với toàn bộ gallery — chỉ giữ encoding cùng source và cùng kích thước ──
+    # Đồng thời thu thập SIM với từng template (compatible_sims) để tier-HARD
+    # check diversity (= max cosine với gallery hiện tại có nhỏ hơn ngưỡng không).
     best_sim = -1.0
     best_record: FaceEncoding | None = None
     skipped_legacy = 0
+    compatible_sims: list[float] = []
 
     for fe in encodings:
         try:
@@ -286,38 +313,72 @@ def verify_face_for_employee(
             skipped_legacy += 1
             continue
         sim = cosine_similarity(query_encoding, enc)
+        compatible_sims.append(sim)
         if sim > best_sim:
             best_sim = sim
             best_record = fe
 
     if best_record is None:
+        # Tất cả template trong gallery đều không tương thích model hiện tại
+        # (vd: encoding cũ length 128 của model deepface generic, trong khi
+        # hiện tại dùng arcface_mtcnn_v1 length 512). Đối với kiosk, trạng
+        # thái này = "chưa đăng ký dưới phiên bản encoding hiện tại" — báo
+        # has_face=False để kiosk hiện thông báo "Chưa đăng ký khuôn mặt"
+        # rõ ràng, user biết liên hệ admin đăng ký lại trên web.
+        logger.warning(
+            "FACE VERIFY  emp_id=%s  name=%s  gallery=%d nhưng TẤT CẢ template không tương thích "
+            "(skipped %d) — yêu cầu đăng ký lại.",
+            employee_id, emp.full_name, len(encodings), skipped_legacy,
+        )
         return success_response(
             data={
                 "match": False,
-                "has_face": True,
+                "has_face": False,
                 "confidence": 0.0,
                 "employee_name": emp.full_name,
-                "error": (
-                    f"Không có template tương thích trong gallery "
-                    f"(skipped {skipped_legacy}/{len(encodings)}). Vui lòng đăng ký lại khuôn mặt."
-                ),
-            }
+            },
+            message="Khuôn mặt được đăng ký với phiên bản cũ. Vui lòng đăng ký lại.",
         )
 
     match = best_sim >= threshold
 
-    # ── Adaptive enrollment: nếu confidence rất cao thì lưu thêm template ──
+    # ── Adaptive enrollment 2-tier ──────────────────────────────────────────
+    # Tier EASY (best_sim ≥ ADAPT_SIMILARITY=0.70): tự thêm template, gallery
+    # tự dịch chuyển theo điều kiện thường gặp (logic cũ).
+    # Tier HARD (ADAPT_SIMILARITY_HARD=0.60 ≤ best_sim < 0.70): học các frame
+    # "khó" với 3 lớp safeguard (quality + diversity + daily rate-limit) để
+    # gallery thực sự tiến hóa theo điều kiện khắc nghiệt mà không bị poison.
+    # Dưới 0.60: không adapt — tránh dạy gallery học theo điểm sát ngưỡng
+    # verify, làm impersonation dễ dần.
     adapted = False
-    if match and best_sim >= adapt_threshold:
+    adapt_tier: str | None = None
+    if match and current == "arcface_mtcnn_v1":
+        adapt_tier = _decide_adapt_tier(
+            db=db,
+            employee_id=employee_id,
+            best_sim=best_sim,
+            compatible_sims=compatible_sims,
+            query_brightness=query_brightness,
+            query_blur_var=query_blur_var,
+        )
+        if adapt_tier:
+            adapted = _add_adaptive_template(
+                db, employee_id, query_encoding, current, tier=adapt_tier,
+                quality_brightness=query_brightness, quality_blur=query_blur_var,
+            )
+    elif match and best_sim >= adapt_threshold:
+        # Mock mode dùng threshold riêng, không có 2-tier.
+        adapt_tier = "mock"
         adapted = _add_adaptive_template(
-            db, employee_id, query_encoding, current,
+            db, employee_id, query_encoding, current, tier=adapt_tier,
+            quality_brightness=query_brightness, quality_blur=query_blur_var,
         )
 
     logger.info(
         "FACE VERIFY  emp_id=%s  name=%s  best_sim=%.4f  threshold=%.2f  match=%s  "
-        "gallery=%d  adapted=%s",
+        "gallery=%d  brightness=%.0f  blur=%.0f  adapt_tier=%s  adapted=%s",
         employee_id, emp.full_name, best_sim, threshold, match,
-        len(encodings), adapted,
+        len(encodings), query_brightness, query_blur_var, adapt_tier, adapted,
     )
 
     return success_response(
@@ -329,8 +390,114 @@ def verify_face_for_employee(
             "employee_name": emp.full_name,
             "gallery_size": len(encodings),
             "adapted": adapted,  # True nếu lần verify này thêm 1 template mới vào gallery
+            "adapt_tier": adapt_tier,  # "easy" / "hard" / None — phục vụ logging và demo
         }
     )
+
+
+def _count_today_hard_adapts(db: Session, employee_id: int) -> int:
+    """Đếm số template tier-HARD đã thêm trong ngày hôm nay cho 1 user.
+
+    Tier được mã hóa vào trường `tier` trong JSON encoding_data — chỉ có
+    template tier='hard' mới tính vào rate-limit (easy không giới hạn vì đã
+    yêu cầu cosine ≥ 0.70 và diversity-aware tự kiềm chế).
+    """
+    from sqlalchemy import func
+    from app.utils import now_vn
+    today_start = now_vn().replace(hour=0, minute=0, second=0, microsecond=0)
+    rows = (
+        db.query(FaceEncoding)
+        .filter(
+            FaceEncoding.employee_id == employee_id,
+            FaceEncoding.is_primary == False,  # noqa: E712
+            FaceEncoding.created_at >= today_start,
+        )
+        .all()
+    )
+    count = 0
+    for fe in rows:
+        try:
+            raw = json.loads(fe.encoding_data)
+            if isinstance(raw, dict) and raw.get("tier") == "hard":
+                count += 1
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return count
+
+
+def _decide_adapt_tier(
+    db: Session,
+    employee_id: int,
+    best_sim: float,
+    compatible_sims: list[float],
+    query_brightness: float,
+    query_blur_var: float,
+) -> str | None:
+    """
+    Quyết định tier adapt cho query hiện tại (chỉ áp dụng cho arcface source).
+
+    Trả về:
+      - "easy" : best_sim ≥ ADAPT_SIMILARITY (0.70) — adapt tự do, gallery
+                 tự cân bằng qua diversity-aware replacement.
+      - "hard" : ADAPT_SIMILARITY_HARD ≤ best_sim < ADAPT_SIMILARITY, AND
+                 quality đủ tốt (đủ sáng, đủ nét), AND diversity OK (chưa có
+                 template nào trong gallery quá giống query), AND chưa
+                 vượt rate-limit hôm nay → frame "khó" thực sự đáng học.
+      - None   : các trường hợp còn lại — không adapt.
+
+    Trả về None thay vì raise để verify endpoint vẫn match thành công ngay
+    cả khi từ chối adapt — adapt là tối ưu sau verify, không phải điều kiện.
+    """
+    if best_sim >= ADAPT_SIMILARITY:
+        return "easy"
+
+    if best_sim < ADAPT_SIMILARITY_HARD:
+        return None
+
+    # Tier HARD candidate — kiểm tra 3 safeguards:
+    # 1. Quality gate — frame phải đủ tốt để đại diện cho điều kiện thực
+    #    user gặp, không phải frame rác. Cho phép khoảng rộng hơn quality
+    #    check thông thường (vì user đang ở điều kiện khó, không nên kén).
+    if not (HARD_ADAPT_MIN_BRIGHTNESS <= query_brightness <= HARD_ADAPT_MAX_BRIGHTNESS):
+        logger.info(
+            "ADAPT-HARD REJECT  emp_id=%s  sim=%.4f  brightness=%.0f ngoài "
+            "khoảng [%.0f, %.0f] — skip.",
+            employee_id, best_sim, query_brightness,
+            HARD_ADAPT_MIN_BRIGHTNESS, HARD_ADAPT_MAX_BRIGHTNESS,
+        )
+        return None
+    if query_blur_var < HARD_ADAPT_MIN_BLUR_VAR:
+        logger.info(
+            "ADAPT-HARD REJECT  emp_id=%s  sim=%.4f  blur=%.1f < %.0f — skip.",
+            employee_id, best_sim, query_blur_var, HARD_ADAPT_MIN_BLUR_VAR,
+        )
+        return None
+
+    # 2. Diversity gate — query phải mang thông tin MỚI so với gallery hiện
+    #    có. Nếu max cosine query vs gallery ≥ 0.90 → đã có template gần
+    #    giống → adapt thêm chỉ làm gallery chật, không cứu được case nào
+    #    mới. Lưu ý đây dùng compatible_sims đã lọc cùng source/length.
+    max_existing_sim = max(compatible_sims) if compatible_sims else 0.0
+    if max_existing_sim >= HARD_ADAPT_DIVERSITY_MAX_SIM:
+        logger.info(
+            "ADAPT-HARD REJECT  emp_id=%s  sim=%.4f  max_existing=%.4f ≥ %.2f "
+            "(đã có template tương tự) — skip.",
+            employee_id, best_sim, max_existing_sim, HARD_ADAPT_DIVERSITY_MAX_SIM,
+        )
+        return None
+
+    # 3. Rate-limit hôm nay — chống case impersonator lọt verify (cosine
+    #    0.60-0.70) rồi spam check-in nhiều lần liên tiếp để adapt poison
+    #    gallery dần thành mặt của họ.
+    today_hard = _count_today_hard_adapts(db, employee_id)
+    if today_hard >= HARD_ADAPT_DAILY_LIMIT:
+        logger.info(
+            "ADAPT-HARD REJECT  emp_id=%s  sim=%.4f  daily=%d/%d đã đạt — skip.",
+            employee_id, best_sim, today_hard, HARD_ADAPT_DAILY_LIMIT,
+        )
+        return None
+
+    return "hard"
 
 
 def _add_adaptive_template(
@@ -338,6 +505,9 @@ def _add_adaptive_template(
     employee_id: int,
     encoding: list[float],
     source: str,
+    tier: str = "easy",
+    quality_brightness: float | None = None,
+    quality_blur: float | None = None,
 ) -> bool:
     """
     Thêm encoding của lần verify thành công (confidence cao) vào gallery như
@@ -384,13 +554,28 @@ def _add_adaptive_template(
                 )
                 return False
 
-        payload = json.dumps({"encoding": encoding, "source": source})
+        # Lưu kèm tier + quality metrics để:
+        #   • _count_today_hard_adapts đếm được template tier='hard'/ngày
+        #   • Có audit trail cho báo cáo: "X template học được trong điều
+        #     kiện khắc nghiệt (brightness < 70, blur < 40) trong tuần"
+        payload_dict = {"encoding": encoding, "source": source, "tier": tier}
+        if quality_brightness is not None:
+            payload_dict["brightness"] = round(quality_brightness, 1)
+        if quality_blur is not None:
+            payload_dict["blur_var"] = round(quality_blur, 1)
+        payload = json.dumps(payload_dict)
         db.add(FaceEncoding(
             employee_id=employee_id,
             encoding_data=payload,
             is_primary=False,
         ))
         db.commit()
+        logger.info(
+            "FACE ADAPT  emp_id=%s  tier=%s  brightness=%s  blur=%s",
+            employee_id, tier,
+            f"{quality_brightness:.0f}" if quality_brightness is not None else "-",
+            f"{quality_blur:.0f}" if quality_blur is not None else "-",
+        )
         return True
     except Exception as e:
         db.rollback()

@@ -21,7 +21,6 @@ import {
 } from 'lucide-react'
 import { reportApi, leaveApi, attendanceApi } from '../../services/api'
 import { format } from 'date-fns'
-import StatusBadge from '../../components/StatusBadge'
 import LoadingSpinner from '../../components/LoadingSpinner'
 import type { LeaveRequest } from '../../types'
 
@@ -258,14 +257,13 @@ const Dashboard: React.FC = () => {
                   <th className="table-header">Ngày</th>
                   <th className="table-header">Giờ vào</th>
                   <th className="table-header">Giờ ra</th>
-                  <th className="table-header">Phương thức</th>
                   <th className="table-header">Số giờ</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {attendanceLogs.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="py-8 text-center text-gray-400 text-sm">
+                    <td colSpan={5} className="py-8 text-center text-gray-400 text-sm">
                       Không có dữ liệu
                     </td>
                   </tr>
@@ -279,9 +277,6 @@ const Dashboard: React.FC = () => {
                       </td>
                       <td className="table-cell">
                         {log.check_out ? format(new Date(log.check_out), 'HH:mm') : '—'}
-                      </td>
-                      <td className="table-cell">
-                        <StatusBadge status={log.method} />
                       </td>
                       <td className="table-cell">
                         {log.work_hours ? `${log.work_hours.toFixed(1)}h` : '—'}

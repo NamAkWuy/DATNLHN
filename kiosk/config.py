@@ -11,11 +11,11 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-API_BASE_URL = os.getenv("API_BASE_URL", "https://datnlhn.onrender.com/api/v1").rstrip("/")
-WS_URL = os.getenv("WS_URL", "wss://datnlhn.onrender.com/ws/kiosk")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000/api/v1").rstrip("/")
+WS_URL = os.getenv("WS_URL", "ws://localhost:8000/ws/kiosk")
 DEVICE_ID = os.getenv("DEVICE_ID", "kiosk-001")
 
-# Local outbox: luu su kien cham cong chua dong bo vao SQLite tren may kiosk.
+# Local outbox: lưu sự kiện chấm công chưa đồng bộ vào SQLite trên máy kiosk.
 LOCAL_OUTBOX_ENABLED = _env_bool("LOCAL_OUTBOX_ENABLED", True)
 LOCAL_OUTBOX_DB = os.getenv(
     "LOCAL_OUTBOX_DB",
@@ -31,7 +31,7 @@ OUTBOX_BATCH_SIZE = int(os.getenv("OUTBOX_BATCH_SIZE", "20"))
 # Chạy `python list_cameras.py` nếu muốn liệt kê các camera đang có.
 # Đặt 1 cho iPhone qua Iriun Webcam — virtual cam thường ở index 1 (sau
 # webcam laptop ở index 0). Nếu mở kiosk thấy nhầm webcam laptop, đổi sang 2.
-CAMERA_SOURCE = 1
+CAMERA_SOURCE = 0
 
 # CAMERA_BACKEND — backend OpenCV dùng để mở camera (Windows).
 #   • "msmf"  → cv2.CAP_MSMF    (mặc định Windows, ổn định cho hầu hết webcam laptop)
@@ -72,7 +72,7 @@ DETECT_WIDTH = 640
 #   1 → nhanh nhất, ưu tiên UX (mặc định demo)
 #   2 → cân bằng
 #   3 → an toàn nhất, +0.5-0.7s trễ happy path
-VERIFY_SHOTS = int(os.getenv("VERIFY_SHOTS", "1"))
+VERIFY_SHOTS = int(os.getenv("VERIFY_SHOTS", "2"))
 VERIFY_SHOT_INTERVAL = float(os.getenv("VERIFY_SHOT_INTERVAL", "0.4"))   # giây giữa mỗi lần chụp
 
 # Tự retry khi backend trả lỗi chất lượng (mờ/tối/nhỏ) — burst lại tối đa N
@@ -108,6 +108,14 @@ CAMERA_INDEX = CAMERA_SOURCE
 
 # ─── Hiển thị kết quả ───────────────────────────────────────────────────────
 DISPLAY_RESULT_DURATION = 3.0    # Giây hiển thị kết quả trên màn hình
+
+# DISPLAY_SCALE — hệ số phóng frame trước khi vẽ overlay & gửi cv2.imshow.
+#   1.0 = vẽ ở native cam res (1280×720) → OpenCV tự bilinear lên fullscreen → mờ
+#   1.5 = vẽ ở 1920×1080 → fullscreen 1080p không cần upscale thêm → sắc nét
+#   2.0 = vẽ ở 2560×1440 → cho màn 2K, tốn ~2× CPU vẽ
+# Pipeline: Lanczos4 upscale frame → vẽ overlay (text Pillow render ở high-res
+# → sắc) → imshow. Hơi tốn ~5-10ms/frame trên Ryzen 7000, đáng giá cho demo.
+DISPLAY_SCALE = float(os.getenv("DISPLAY_SCALE", "2.0"))
 
 # Độ phân giải gửi lên backend — đây là đòn bẩy CHÍNH cho độ chính xác:
 # detector trong DeepFace/InsightFace crop khuôn mặt rồi resize về 112×112

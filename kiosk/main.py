@@ -26,7 +26,7 @@ import display
 from config import (
     CAMERA_INDEX, CAMERA_BACKEND, FRAME_WIDTH, FRAME_HEIGHT,
     FRAME_FPS, CAMERA_FOURCC, CAMERA_ROTATE, DETECT_WIDTH,
-    DISPLAY_RESULT_DURATION,
+    DISPLAY_RESULT_DURATION, DISPLAY_SCALE,
     RFID_ENABLED, RFID_AUTO_SUBMIT_TIMEOUT, WINDOW_TITLE,
     VERIFY_SHOTS, VERIFY_SHOT_INTERVAL, VERIFY_QUALITY_RETRIES,
     BURST_FRAMES, BURST_INTERVAL,
@@ -139,6 +139,76 @@ def _laplacian_variance(frame_bgr) -> float:
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
 
+# Cache detector dành riêng cho _wait_for_face (tránh load lại mỗi lần quẹt thẻ).
+_WAIT_DETECTOR = None
+
+
+def _get_wait_detector():
+    global _WAIT_DETECTOR
+    if _WAIT_DETECTOR is None:
+        _WAIT_DETECTOR = load_face_detector()
+    return _WAIT_DETECTOR
+
+
+def _wait_for_face(get_latest_frame, timeout: float = 2.0,
+                   poll_interval: float = 0.08,
+                   downscale_to: int = 480):
+    """
+    Đợi đến khi camera thấy khuôn mặt người dùng, tối đa `timeout` giây.
+
+    Vì sao tồn tại:
+      Sau khi user quẹt RFID, hệ thống thường chụp NGAY — user còn đang đưa
+      tay xuống, chưa nhìn vào camera → backend Haar không thấy mặt → fail
+      "Không phát hiện khuôn mặt". Kiosk retry burst nhưng burst chỉ cách
+      nhau 50ms × 8 frame = 400ms, không đủ để user kịp ổn định.
+
+      Hàm này detect face NGAY TẠI KIOSK (không gửi backend) trong vòng lặp
+      poll mỗi 80ms, chỉ trả về khi local detector thấy mặt — coi như tín
+      hiệu "user đã sẵn sàng". Sau đó mới gọi burst để chụp frame nét nhất.
+
+    Trade-off:
+      • Thêm tối đa 2 giây trễ trong trường hợp xấu nhất, nhưng cắt được
+        hầu hết các lần retry "không phát hiện" nên trung bình nhanh hơn.
+      • Detect local dùng ảnh downscale 480px + minSize=60 → ~5-15ms/frame
+        trên Ryzen 7000, không gây lag UI.
+    """
+    if get_latest_frame is None:
+        return None
+    detector = _get_wait_detector()
+    if detector is None or detector.empty():
+        return None
+
+    start = time.time()
+    last_frame = None
+    while time.time() - start < timeout:
+        frame = get_latest_frame()
+        if frame is None:
+            time.sleep(poll_interval)
+            continue
+        last_frame = frame
+        h, w = frame.shape[:2]
+        if w > downscale_to:
+            scale = downscale_to / w
+            small = cv2.resize(
+                frame, (downscale_to, int(h * scale)), interpolation=cv2.INTER_AREA
+            )
+        else:
+            small = frame
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        faces = detector.detectMultiScale(
+            gray, scaleFactor=1.1, minNeighbors=4, minSize=(60, 60)
+        )
+        if len(faces) > 0:
+            logger.debug(
+                f"_wait_for_face: thấy mặt sau {(time.time() - start) * 1000:.0f}ms"
+            )
+            return frame
+        time.sleep(poll_interval)
+
+    logger.info(f"_wait_for_face: timeout {timeout}s — fall back chụp luôn")
+    return last_frame
+
+
 def _pick_sharpest_frame(get_latest_frame, n: int = BURST_FRAMES,
                          interval: float = BURST_INTERVAL,
                          seed_frame=None):
@@ -208,6 +278,15 @@ def process_rfid(uid: str, frame_bgr, get_latest_frame=None) -> display.ResultOv
     emp_name = emp_info.get("employee_name", "?")
     emp_id   = emp_info.get("employee_id")
     logger.info(f"Thẻ của: {emp_name} (id={emp_id})")
+
+    # ── Đợi user vào khung hình trước khi chụp ──────────────────────────────
+    # Sau khi quẹt thẻ, user thường còn đang đưa tay xuống → nếu chụp ngay,
+    # backend Haar không thấy mặt → nhiều retry "Không phát hiện khuôn mặt".
+    # Detect tại kiosk (cheap) và đợi tới khi thấy face, tối đa 2s rồi mới
+    # bắt đầu burst. Frame trả về dùng làm seed thay cho `frame_bgr` ban đầu.
+    ready_frame = _wait_for_face(get_latest_frame, timeout=2.0)
+    if ready_frame is not None:
+        frame_bgr = ready_frame
 
     # ── Xác thực khuôn mặt nhiều lần ────────────────────────────────────────
     sims: list[float] = []
@@ -327,10 +406,10 @@ def process_rfid(uid: str, frame_bgr, get_latest_frame=None) -> display.ResultOv
 
     error = result.get("error")
     if error == "queued_offline":
-        logger.warning(f"{emp_name} da duoc luu tam tren kiosk, cho dong bo online.")
+        logger.warning(f"{emp_name} đã được lưu tạm trên kiosk, chờ đồng bộ online.")
         return display.ResultOverlay(
-            message="Da luu tam cham cong",
-            submessage=f"{emp_name}  •  Se tu dong dong bo khi co mang",
+            message="Đã lưu tạm chấm công",
+            submessage=f"{emp_name}  •  Sẽ tự động đồng bộ khi có mạng",
             success=True,
             show_until=time.time() + DISPLAY_RESULT_DURATION,
         )
@@ -668,33 +747,55 @@ def main():
         # ── Phát hiện khuôn mặt (chỉ để hiển thị khung, không xác thực) ──────
         faces = detect_faces(gray, detector, scale=detect_scale)
 
+        # ── Phóng frame lên DISPLAY_SCALE trước khi vẽ overlay ────────────────
+        # Lý do: cv2.imshow chỉ scale bằng bilinear → fullscreen mờ. Nếu ta
+        # upscale frame lên 1.5x với LANCZOS4 trước khi vẽ, thì:
+        #   • Camera image sắc hơn bilinear của driver
+        #   • Quan trọng hơn — TEXT + FACE BOX được Pillow vẽ Ở ĐỘ PHÂN GIẢI
+        #     CAO (1920×1080 thay vì 1280×720) → sắc nét rõ khi fullscreen
+        # Face bbox cũng scale theo để vẽ đúng vị trí.
+        if DISPLAY_SCALE != 1.0:
+            new_w = int(frame.shape[1] * DISPLAY_SCALE)
+            new_h = int(frame.shape[0] * DISPLAY_SCALE)
+            display_frame = cv2.resize(
+                frame, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4
+            )
+            faces_disp = [
+                (int(x * DISPLAY_SCALE), int(y * DISPLAY_SCALE),
+                 int(w * DISPLAY_SCALE), int(h * DISPLAY_SCALE))
+                for (x, y, w, h) in faces
+            ]
+        else:
+            display_frame = frame
+            faces_disp = faces
+
         # ── Vẽ giao diện ──────────────────────────────────────────────────────
-        display.draw_header(frame)
+        display.draw_header(display_frame)
 
         with overlay_lock:
             overlay_snap = current_overlay
             processing   = is_processing
 
         # Khung quanh khuôn mặt phát hiện được
-        for (x, y, w, h) in faces:
+        for (x, y, w, h) in faces_disp:
             if overlay_snap and overlay_snap.is_active():
                 box_color = display.GREEN if overlay_snap.success else display.RED_BGR
             else:
                 box_color = display.GREEN
-            display.draw_face_box(frame, x, y, w, h, box_color)
+            display.draw_face_box(display_frame, x, y, w, h, box_color)
 
         # Overlay chế độ đăng ký
         if register_mode:
-            _draw_register_mode(frame, register_id_buf)
+            _draw_register_mode(display_frame, register_id_buf)
         elif overlay_snap and overlay_snap.is_active():
-            display.draw_result_overlay(frame, overlay_snap)
+            display.draw_result_overlay(display_frame, overlay_snap)
         else:
-            _draw_idle_rfid_prompt(frame)
+            _draw_idle_rfid_prompt(display_frame)
 
         if processing and not register_mode:
-            _draw_processing_badge(frame)
+            _draw_processing_badge(display_frame)
 
-        cv2.imshow(WINDOW_TITLE, frame)
+        cv2.imshow(WINDOW_TITLE, display_frame)
 
     cap.release()
     api_client.stop_outbox_sync_worker()

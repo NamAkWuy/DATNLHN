@@ -16,6 +16,25 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 
 # ============================================================================
+# UI scaling — mọi kích thước/font được thiết kế cho frame width 1280px.
+# Khi DISPLAY_SCALE > 1 (main.py upscale lên 1920/2560/…), ta nhân hằng số
+# với `s = canvas.w / 1280` để UI co giãn THEO MÀN HÌNH thay vì cố định
+# pixel → trên fullscreen 2K/4K vẫn lớn và sắc, không bị "card 620px lọt
+# thỏm trong screen 2560px".
+# ============================================================================
+BASE_WIDTH = 1280
+
+def _ui_scale(canvas) -> float:
+    return canvas.w / BASE_WIDTH
+
+
+def _S(canvas, *vals):
+    """Scale một loạt int theo ui_scale. Dùng để gọn `S(canvas, 620, 360, 28)`."""
+    s = _ui_scale(canvas)
+    return tuple(int(v * s) for v in vals)
+
+
+# ============================================================================
 # Bảng màu — chủ đề Mint
 # Lưu RGB (Pillow native). Khi cần BGR cho OpenCV thì dùng _rgb_to_bgr().
 # Giữ tên hằng số cũ để main.py không phải đổi.
@@ -192,7 +211,8 @@ class ResultOverlay:
 def draw_header(frame):
     canvas = _PILCanvas(frame)
     w = canvas.w
-    bar_h = 76
+    s = _ui_scale(canvas)
+    bar_h = int(76 * s)
 
     # Gradient ngang nhiều stop: deep → primary → accent
     canvas.hgradient((0, 0, w // 2, bar_h), PRIMARY_DEEP, PRIMARY_DARK)
@@ -203,33 +223,38 @@ def draw_header(frame):
                           fill=(255, 255, 255, 24))
 
     # Đường viền dưới — accent sáng
-    canvas.line(((0, bar_h - 1), (w, bar_h - 1)), fill=(*ACCENT, 220), width=2)
+    canvas.line(((0, bar_h - 1), (w, bar_h - 1)), fill=(*ACCENT, 220),
+                width=max(1, int(2 * s)))
     canvas.line(((0, bar_h + 1), (w, bar_h + 1)),
                 fill=(*PRIMARY_DEEP, 80), width=1)
 
     # ─── Logo: huy hiệu tròn có vành sáng ───
     cy = bar_h // 2
-    cx = 36
+    cx = int(36 * s)
+    halo_r = int(22 * s)
+    badge_outer_r = int(18 * s)
+    badge_inner_r = int(13 * s)
     # Halo
-    canvas.ellipse((cx - 22, cy - 22, cx + 22, cy + 22),
+    canvas.ellipse((cx - halo_r, cy - halo_r, cx + halo_r, cy + halo_r),
                    fill=(255, 255, 255, 28))
-    canvas.ellipse((cx - 18, cy - 18, cx + 18, cy + 18), fill=WHITE)
-    canvas.ellipse((cx - 13, cy - 13, cx + 13, cy + 13), fill=PRIMARY_DEEP)
+    canvas.ellipse((cx - badge_outer_r, cy - badge_outer_r,
+                    cx + badge_outer_r, cy + badge_outer_r), fill=WHITE)
+    canvas.ellipse((cx - badge_inner_r, cy - badge_inner_r,
+                    cx + badge_inner_r, cy + badge_inner_r), fill=PRIMARY_DEEP)
     # Hình bóng "người" đơn giản trong huy hiệu
-    canvas.ellipse((cx - 5, cy - 7, cx + 5, cy + 3), fill=WHITE)
-    canvas.rounded_rect((cx - 8, cy + 2, cx + 8, cy + 11),
-                        radius=4, fill=WHITE)
+    h_off = int(5 * s)
+    canvas.ellipse((cx - h_off, cy - int(7 * s), cx + h_off, cy + int(3 * s)),
+                   fill=WHITE)
+    canvas.rounded_rect((cx - int(8 * s), cy + int(2 * s),
+                         cx + int(8 * s), cy + int(11 * s)),
+                        radius=int(4 * s), fill=WHITE)
 
     # ─── Brand text ───
-    canvas.text((68, cy - 12), "TRẠM CHẤM CÔNG",
-                weight="bold", size=20, color=WHITE, anchor="lm")
-    canvas.text((68, cy + 14), "Nhận diện khuôn mặt · RFID",
-                weight="regular", size=12, color=(255, 255, 255, 200),
-                anchor="lm")
+    canvas.text((int(68 * s), cy), "TRẠM CHẤM CÔNG",
+                weight="bold", size=int(22 * s), color=WHITE, anchor="lm")
 
     # ─── Đồng hồ + ngày ở phải ───
     t = time.strftime("%H:%M:%S")
-    d = time.strftime("%A · %d/%m/%Y")
     # map weekday tiếng Việt
     weekdays = {
         "Monday": "Thứ Hai", "Tuesday": "Thứ Ba", "Wednesday": "Thứ Tư",
@@ -239,10 +264,11 @@ def draw_header(frame):
     en = time.strftime("%A")
     d = f"{weekdays.get(en, en)} · {time.strftime('%d/%m/%Y')}"
 
-    canvas.text((w - 20, cy - 12), t, weight="bold", size=24,
-                color=WHITE, anchor="rm")
-    canvas.text((w - 20, cy + 14), d, weight="regular", size=12,
-                color=(255, 255, 255, 200), anchor="rm")
+    canvas.text((w - int(20 * s), cy - int(12 * s)), t,
+                weight="bold", size=int(26 * s), color=WHITE, anchor="rm")
+    canvas.text((w - int(20 * s), cy + int(16 * s)), d,
+                weight="semibold", size=int(15 * s),
+                color=(255, 255, 255, 230), anchor="rm")
 
     canvas.commit()
 
@@ -256,11 +282,11 @@ def draw_face_box(frame, x, y, w, h, color=GREEN):
     color_rgb = _rgb_to_bgr(color) if isinstance(color, tuple) else SUCCESS
     canvas = _PILCanvas(frame)
 
-    L = max(26, min(w, h) // 4)
-    th = 4
+    L = max(22, min(w, h) // 4)
+    th = 2
 
-    # Glow mềm phía sau (vẽ đậm hơn rồi sẽ phủ bằng line sắc nét)
-    glow_color = (*color_rgb, 90)
+    # Glow mềm phía sau (mỏng hơn — viền tinh tế thay vì bold)
+    glow_color = (*color_rgb, 70)
     for (a, b) in [
         ((x, y), (x + L, y)), ((x, y), (x, y + L)),
         ((x + w, y), (x + w - L, y)), ((x + w, y), (x + w, y + L)),
@@ -268,7 +294,7 @@ def draw_face_box(frame, x, y, w, h, color=GREEN):
         ((x + w, y + h), (x + w - L, y + h)),
         ((x + w, y + h), (x + w, y + h - L)),
     ]:
-        canvas.line((a, b), fill=glow_color, width=th + 8)
+        canvas.line((a, b), fill=glow_color, width=th + 5)
 
     # Góc bo sắc nét — vẽ bằng arc + line để ra hình "L cong"
     r = 14  # bán kính bo của khung
@@ -329,6 +355,7 @@ def draw_face_box(frame, x, y, w, h, color=GREEN):
 def draw_result_overlay(frame, overlay: ResultOverlay):
     canvas = _PILCanvas(frame)
     w, h = canvas.w, canvas.h
+    s = _ui_scale(canvas)
     success = overlay.success
     main_color = SUCCESS if success else DANGER
     dark_color = SUCCESS_DARK if success else DANGER_DARK
@@ -336,103 +363,110 @@ def draw_result_overlay(frame, overlay: ResultOverlay):
     # ─── Backdrop tối (vignette) ───
     canvas.rect((0, 0, w, h), fill=(8, 12, 10, 165))
 
-    # ─── Kích thước thẻ ───
-    card_w = min(620, w - 80)
-    card_h = 360
+    # ─── Kích thước thẻ — TỈ LỆ với frame width (không cố định pixel nữa) ───
+    # Trên 1280 → 620w/360h (như cũ).
+    # Trên 2560 → 1240w/720h → vẫn ~48% width nên không bị nhỏ.
+    card_w = min(int(620 * s), w - int(80 * s))
+    card_h = int(360 * s)
     cx1 = (w - card_w) // 2
     cy1 = (h - card_h) // 2
     cx2 = cx1 + card_w
     cy2 = cy1 + card_h
-    radius = 28
+    radius = int(28 * s)
 
     # Bóng đổ — vẽ nhiều lớp ellipse để mượt
     for i, alpha in enumerate([18, 26, 36]):
-        off = 12 - i * 3
+        off = int((12 - i * 3) * s)
         canvas.rounded_rect(
-            (cx1 - off, cy1 + off, cx2 + off, cy2 + off + 6),
+            (cx1 - off, cy1 + off, cx2 + off, cy2 + off + int(6 * s)),
             radius=radius + off,
             fill=(0, 0, 0, alpha),
         )
 
-    # Thân thẻ — gradient nhẹ (trắng → trắng-mint)
+    # Thân thẻ
     canvas.rounded_rect((cx1, cy1, cx2, cy2), radius=radius, fill=CARD_BG)
-    # Lớp accent mờ phủ phía trên thân thẻ
     accent_top = (*main_color, 18) if success else (*main_color, 16)
-    canvas.rounded_rect((cx1, cy1, cx2, cy1 + 120),
+    canvas.rounded_rect((cx1, cy1, cx2, cy1 + int(120 * s)),
                         radius=radius, fill=accent_top)
 
-    # Dải màu trên đỉnh thẻ — bo cùng radius
-    canvas.rounded_rect((cx1, cy1, cx2, cy1 + 14),
+    # Dải màu trên đỉnh thẻ
+    canvas.rounded_rect((cx1, cy1, cx2, cy1 + int(14 * s)),
                         radius=radius, fill=main_color)
-    canvas.rect((cx1, cy1 + 7, cx2, cy1 + 14), fill=main_color)
+    canvas.rect((cx1, cy1 + int(7 * s), cx2, cy1 + int(14 * s)),
+                fill=main_color)
 
     # ─── Biểu tượng trạng thái — vòng tròn lớn có halo ───
     icon_cx = w // 2
-    icon_cy = cy1 + 105
-    icon_r = 50
+    icon_cy = cy1 + int(105 * s)
+    icon_r = int(50 * s)
 
-    # Halo
     canvas.ellipse(
-        (icon_cx - icon_r - 14, icon_cy - icon_r - 14,
-         icon_cx + icon_r + 14, icon_cy + icon_r + 14),
+        (icon_cx - icon_r - int(14 * s), icon_cy - icon_r - int(14 * s),
+         icon_cx + icon_r + int(14 * s), icon_cy + icon_r + int(14 * s)),
         fill=(*main_color, 35),
     )
     canvas.ellipse(
-        (icon_cx - icon_r - 6, icon_cy - icon_r - 6,
-         icon_cx + icon_r + 6, icon_cy + icon_r + 6),
+        (icon_cx - icon_r - int(6 * s), icon_cy - icon_r - int(6 * s),
+         icon_cx + icon_r + int(6 * s), icon_cy + icon_r + int(6 * s)),
         fill=(*main_color, 60),
     )
-    # Tâm
     canvas.ellipse(
         (icon_cx - icon_r, icon_cy - icon_r,
          icon_cx + icon_r, icon_cy + icon_r),
         fill=dark_color,
     )
 
-    # Dấu tích / dấu X — vẽ qua line dày trên Pillow (có AA)
+    # Dấu tích / dấu X
+    stroke = max(4, int(6 * s))
     if success:
         canvas.line(
-            ((icon_cx - 22, icon_cy + 2), (icon_cx - 6, icon_cy + 18)),
-            fill=WHITE, width=6,
+            ((icon_cx - int(22 * s), icon_cy + int(2 * s)),
+             (icon_cx - int(6 * s), icon_cy + int(18 * s))),
+            fill=WHITE, width=stroke,
         )
         canvas.line(
-            ((icon_cx - 6, icon_cy + 18), (icon_cx + 22, icon_cy - 12)),
-            fill=WHITE, width=6,
+            ((icon_cx - int(6 * s), icon_cy + int(18 * s)),
+             (icon_cx + int(22 * s), icon_cy - int(12 * s))),
+            fill=WHITE, width=stroke,
         )
     else:
         canvas.line(
-            ((icon_cx - 18, icon_cy - 18), (icon_cx + 18, icon_cy + 18)),
-            fill=WHITE, width=6,
+            ((icon_cx - int(18 * s), icon_cy - int(18 * s)),
+             (icon_cx + int(18 * s), icon_cy + int(18 * s))),
+            fill=WHITE, width=stroke,
         )
         canvas.line(
-            ((icon_cx + 18, icon_cy - 18), (icon_cx - 18, icon_cy + 18)),
-            fill=WHITE, width=6,
+            ((icon_cx + int(18 * s), icon_cy - int(18 * s)),
+             (icon_cx - int(18 * s), icon_cy + int(18 * s))),
+            fill=WHITE, width=stroke,
         )
 
     # ─── Thông điệp chính ───
-    canvas.text((w // 2, cy1 + 200), overlay.message,
-                weight="bold", size=28, color=GRAY_900, anchor="mm")
+    canvas.text((w // 2, cy1 + int(200 * s)), overlay.message,
+                weight="bold", size=int(28 * s), color=GRAY_900, anchor="mm")
 
     # ─── Thông điệp phụ ───
     if overlay.submessage:
-        canvas.text((w // 2, cy1 + 240), overlay.submessage,
-                    weight="regular", size=15, color=GRAY_700, anchor="mm")
+        canvas.text((w // 2, cy1 + int(240 * s)), overlay.submessage,
+                    weight="semibold", size=int(16 * s),
+                    color=GRAY_700, anchor="mm")
 
     # ─── Pill trạng thái dưới đáy ───
     pill_text = "THÀNH CÔNG" if success else "KHÔNG THÀNH CÔNG"
-    pw, ph = _measure_text(pill_text, weight="bold", size=12)
-    pad_x, pad_y = 18, 8
+    pill_font_size = int(14 * s)
+    pw, ph = _measure_text(pill_text, weight="bold", size=pill_font_size)
+    pad_x, pad_y = int(20 * s), int(10 * s)
     pill_w = pw + pad_x * 2
-    pill_h = ph + pad_y * 2 + 4
+    pill_h = ph + pad_y * 2 + int(4 * s)
     px1 = w // 2 - pill_w // 2
-    py1 = cy2 - pill_h - 24
+    py1 = cy2 - pill_h - int(24 * s)
     canvas.rounded_rect(
         (px1, py1, px1 + pill_w, py1 + pill_h),
         radius=pill_h // 2, fill=main_color,
     )
     canvas.text(
         (w // 2, py1 + pill_h // 2 + 1), pill_text,
-        weight="bold", size=12, color=WHITE, anchor="mm",
+        weight="bold", size=pill_font_size, color=WHITE, anchor="mm",
     )
 
     canvas.commit()
@@ -444,19 +478,20 @@ def draw_result_overlay(frame, overlay: ResultOverlay):
 def draw_idle_prompt(frame):
     canvas = _PILCanvas(frame)
     w, h = canvas.w, canvas.h
-    dock_h = 88
-    margin = 22
+    s = _ui_scale(canvas)
+    dock_h = int(88 * s)
+    margin = int(22 * s)
     dx1 = margin
     dy1 = h - dock_h - margin
     dx2 = w - margin
     dy2 = dy1 + dock_h
-    radius = 22
+    radius = int(22 * s)
 
     # Bóng đổ mờ
     for i, a in enumerate([14, 20, 26]):
-        off = 10 - i * 3
+        off = int((10 - i * 3) * s)
         canvas.rounded_rect(
-            (dx1 - off, dy1 + off, dx2 + off, dy2 + off + 4),
+            (dx1 - off, dy1 + off, dx2 + off, dy2 + off + int(4 * s)),
             radius=radius + off, fill=(0, 0, 0, a),
         )
 
@@ -468,65 +503,35 @@ def draw_idle_prompt(frame):
                         radius=radius, fill=(255, 255, 255, 14))
     # Viền sáng mảnh
     canvas.rounded_rect((dx1, dy1, dx2, dy2),
-                        radius=radius, outline=(*PRIMARY, 110), width=2)
+                        radius=radius, outline=(*PRIMARY, 90),
+                        width=max(1, int(1 * s)))
 
     # ─── Status dot pulsing bên trái ───
     cy = (dy1 + dy2) // 2
     pulse = 0.5 + 0.5 * np.sin(time.time() * 3)
-    dot_r_outer = int(14 + pulse * 4)
-    dot_r_inner = 8
+    dot_r_outer = int((14 + pulse * 4) * s)
+    dot_r_inner = int(8 * s)
+    dot_cx = dx1 + int(30 * s)
     canvas.ellipse(
-        (dx1 + 30 - dot_r_outer, cy - dot_r_outer,
-         dx1 + 30 + dot_r_outer, cy + dot_r_outer),
+        (dot_cx - dot_r_outer, cy - dot_r_outer,
+         dot_cx + dot_r_outer, cy + dot_r_outer),
         fill=(*PRIMARY, int(60 + 80 * pulse)),
     )
     canvas.ellipse(
-        (dx1 + 30 - dot_r_inner, cy - dot_r_inner,
-         dx1 + 30 + dot_r_inner, cy + dot_r_inner),
+        (dot_cx - dot_r_inner, cy - dot_r_inner,
+         dot_cx + dot_r_inner, cy + dot_r_inner),
         fill=PRIMARY,
-    )
-    # Highlight
-    canvas.ellipse(
-        (dx1 + 28, cy - 6, dx1 + 32, cy - 2),
-        fill=(255, 255, 255, 200),
     )
 
     # ─── Text ───
-    tx = dx1 + 60
-    canvas.text((tx, cy - 10),
+    tx = dx1 + int(60 * s)
+    canvas.text((tx, cy - int(11 * s)),
                 "Sẵn sàng — Vui lòng quẹt thẻ và đưa khuôn mặt",
-                weight="bold", size=17, color=WHITE, anchor="lm")
-    canvas.text((tx, cy + 16),
+                weight="bold", size=int(19 * s), color=WHITE, anchor="lm")
+    canvas.text((tx, cy + int(18 * s)),
                 "Q / ESC: Thoát   ·   R: Đăng ký khuôn mặt mới",
-                weight="regular", size=12, color=(225, 235, 230, 255),
-                anchor="lm")
-
-    # ─── Pill RFID + Camera ở phải ───
-    pill_y = cy
-    pill_h = 30
-    pill_pad = 14
-
-    def chip(text, x_right, color):
-        tw, th = _measure_text(text, weight="semibold", size=11)
-        pw = tw + pill_pad * 2 + 18
-        x1 = x_right - pw
-        y1 = pill_y - pill_h // 2
-        canvas.rounded_rect((x1, y1, x_right, y1 + pill_h),
-                            radius=pill_h // 2,
-                            fill=(255, 255, 255, 28),
-                            outline=(*color, 180), width=1)
-        # dot
-        dr = 4
-        dot_x = x1 + 12
-        canvas.ellipse((dot_x - dr, pill_y - dr,
-                        dot_x + dr, pill_y + dr), fill=color)
-        canvas.text((x1 + 24, pill_y + 1), text,
-                    weight="semibold", size=11, color=WHITE, anchor="lm")
-        return x1
-
-    next_x = dx2 - 14
-    next_x = chip("CAMERA", next_x, PRIMARY) - 10
-    chip("RFID", next_x, ACCENT)
+                weight="semibold", size=int(14 * s),
+                color=(225, 235, 230, 255), anchor="lm")
 
     canvas.commit()
 
@@ -537,44 +542,44 @@ def draw_idle_prompt(frame):
 def draw_register_mode(frame, emp_id_buf: str):
     canvas = _PILCanvas(frame)
     w, h = canvas.w, canvas.h
+    s = _ui_scale(canvas)
 
     # Backdrop
     canvas.rect((0, 0, w, h), fill=(8, 12, 10, 165))
 
-    card_w = min(580, w - 80)
-    card_h = 320
+    card_w = min(int(580 * s), w - int(80 * s))
+    card_h = int(320 * s)
     cx1 = (w - card_w) // 2
     cy1 = (h - card_h) // 2
     cx2 = cx1 + card_w
     cy2 = cy1 + card_h
-    radius = 28
+    radius = int(28 * s)
 
     # Bóng đổ
     for i, a in enumerate([18, 26, 36]):
-        off = 12 - i * 3
+        off = int((12 - i * 3) * s)
         canvas.rounded_rect(
-            (cx1 - off, cy1 + off, cx2 + off, cy2 + off + 6),
+            (cx1 - off, cy1 + off, cx2 + off, cy2 + off + int(6 * s)),
             radius=radius + off, fill=(0, 0, 0, a),
         )
 
     # Thân thẻ
     canvas.rounded_rect((cx1, cy1, cx2, cy2), radius=radius, fill=CARD_BG)
-    # Lớp accent
-    canvas.rounded_rect((cx1, cy1, cx2, cy1 + 120),
+    canvas.rounded_rect((cx1, cy1, cx2, cy1 + int(120 * s)),
                         radius=radius, fill=(*WARNING, 18))
 
     # Dải màu trên đỉnh
-    canvas.rounded_rect((cx1, cy1, cx2, cy1 + 14),
+    canvas.rounded_rect((cx1, cy1, cx2, cy1 + int(14 * s)),
                         radius=radius, fill=WARNING)
-    canvas.rect((cx1, cy1 + 7, cx2, cy1 + 14), fill=WARNING)
+    canvas.rect((cx1, cy1 + int(7 * s), cx2, cy1 + int(14 * s)), fill=WARNING)
 
-    # Icon cảnh báo / đăng ký — vòng tròn warning có chữ "ID"
+    # Icon
     icon_cx = w // 2
-    icon_cy = cy1 + 90
-    icon_r = 36
+    icon_cy = cy1 + int(90 * s)
+    icon_r = int(36 * s)
     canvas.ellipse(
-        (icon_cx - icon_r - 8, icon_cy - icon_r - 8,
-         icon_cx + icon_r + 8, icon_cy + icon_r + 8),
+        (icon_cx - icon_r - int(8 * s), icon_cy - icon_r - int(8 * s),
+         icon_cx + icon_r + int(8 * s), icon_cy + icon_r + int(8 * s)),
         fill=(*WARNING, 50),
     )
     canvas.ellipse(
@@ -583,39 +588,41 @@ def draw_register_mode(frame, emp_id_buf: str):
         fill=WARNING_DARK,
     )
     canvas.text((icon_cx, icon_cy + 1), "ID",
-                weight="bold", size=22, color=WHITE, anchor="mm")
+                weight="bold", size=int(22 * s), color=WHITE, anchor="mm")
 
     # Tiêu đề
-    canvas.text((w // 2, cy1 + 160), "ĐĂNG KÝ KHUÔN MẶT MỚI",
-                weight="bold", size=20, color=GRAY_900, anchor="mm")
-    canvas.text((w // 2, cy1 + 188),
+    canvas.text((w // 2, cy1 + int(160 * s)), "ĐĂNG KÝ KHUÔN MẶT MỚI",
+                weight="bold", size=int(20 * s), color=GRAY_900, anchor="mm")
+    canvas.text((w // 2, cy1 + int(188 * s)),
                 "Nhập mã nhân viên rồi nhấn Enter để chụp",
-                weight="regular", size=13, color=GRAY_700, anchor="mm")
+                weight="semibold", size=int(14 * s),
+                color=GRAY_700, anchor="mm")
 
     # Input pill
-    pill_w = 280
-    pill_h = 64
+    pill_w = int(280 * s)
+    pill_h = int(64 * s)
     px1 = w // 2 - pill_w // 2
-    py1 = cy1 + 210
+    py1 = cy1 + int(210 * s)
     canvas.rounded_rect((px1, py1, px1 + pill_w, py1 + pill_h),
-                        radius=16, fill=GRAY_100,
-                        outline=WARNING, width=3)
+                        radius=int(16 * s), fill=GRAY_100,
+                        outline=WARNING, width=max(2, int(3 * s)))
 
     show = emp_id_buf if emp_id_buf else ""
     caret = "│" if int(time.time() * 2) % 2 == 0 else " "
     placeholder = "0000" if not show else ""
     if placeholder:
         canvas.text((w // 2, py1 + pill_h // 2), placeholder,
-                    weight="regular", size=24,
+                    weight="regular", size=int(24 * s),
                     color=GRAY_500, anchor="mm")
     canvas.text((w // 2, py1 + pill_h // 2),
                 f"{show}{caret}",
-                weight="bold", size=26, color=GRAY_900, anchor="mm")
+                weight="bold", size=int(26 * s), color=GRAY_900, anchor="mm")
 
     # Hint dưới đáy
-    canvas.text((w // 2, cy2 - 26),
+    canvas.text((w // 2, cy2 - int(26 * s)),
                 "Enter: Xác nhận   ·   ESC: Hủy",
-                weight="regular", size=12, color=GRAY_500, anchor="mm")
+                weight="semibold", size=int(13 * s),
+                color=GRAY_500, anchor="mm")
 
     canvas.commit()
 
@@ -626,38 +633,42 @@ def draw_register_mode(frame, emp_id_buf: str):
 def draw_processing_badge(frame):
     canvas = _PILCanvas(frame)
     w = canvas.w
+    s = _ui_scale(canvas)
     text = "Đang xử lý..."
-    tw, th = _measure_text(text, weight="bold", size=13)
+    font_size = int(15 * s)
+    tw, th = _measure_text(text, weight="bold", size=font_size)
 
-    pad_x, pad_y = 16, 10
-    spinner_box = 22
-    bw = tw + pad_x * 2 + spinner_box + 8
-    bh = th + pad_y * 2 + 2
-    bx2 = w - 24
+    pad_x, pad_y = int(18 * s), int(12 * s)
+    spinner_box = int(24 * s)
+    bw = tw + pad_x * 2 + spinner_box + int(8 * s)
+    bh = th + pad_y * 2 + int(2 * s)
+    bx2 = w - int(24 * s)
     bx1 = bx2 - bw
-    by1 = 96
+    by1 = int(96 * s)
     by2 = by1 + bh
 
     # Bóng đổ
-    canvas.rounded_rect((bx1 + 2, by1 + 4, bx2 + 2, by2 + 6),
-                        radius=bh // 2, fill=(0, 0, 0, 60))
+    canvas.rounded_rect(
+        (bx1 + int(2 * s), by1 + int(4 * s), bx2 + int(2 * s), by2 + int(6 * s)),
+        radius=bh // 2, fill=(0, 0, 0, 60)
+    )
     # Thân
     canvas.rounded_rect((bx1, by1, bx2, by2),
                         radius=bh // 2, fill=GRAY_900,
-                        outline=WARNING, width=2)
+                        outline=WARNING, width=max(1, int(2 * s)))
 
-    # Spinner — vẽ arc xoay
-    spinner_cx = bx1 + pad_x + 8
+    # Spinner
+    spinner_cx = bx1 + pad_x + int(8 * s)
     spinner_cy = (by1 + by2) // 2
     angle = (time.time() * 360) % 360
-    r = 9
+    r = int(10 * s)
     canvas.draw.arc(
         (spinner_cx - r, spinner_cy - r, spinner_cx + r, spinner_cy + r),
         start=angle, end=angle + 270,
-        fill=WARNING, width=2,
+        fill=WARNING, width=max(2, int(2 * s)),
     )
 
-    canvas.text((bx1 + pad_x + spinner_box + 8, spinner_cy), text,
-                weight="bold", size=13, color=WHITE, anchor="lm")
+    canvas.text((bx1 + pad_x + spinner_box + int(8 * s), spinner_cy), text,
+                weight="bold", size=font_size, color=WHITE, anchor="lm")
 
     canvas.commit()

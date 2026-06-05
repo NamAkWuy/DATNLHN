@@ -236,7 +236,7 @@ def _safe_store_call(fn, *args) -> bool:
         fn(*args)
         return True
     except Exception as exc:
-        logger.error(f"Loi ghi SQLite outbox kiosk: {exc}")
+        logger.error(f"Lỗi ghi SQLite outbox kiosk: {exc}")
         return False
 
 
@@ -281,12 +281,12 @@ def sync_pending_attendance_events() -> int:
             if status == 200:
                 local_store.mark_synced(event_id)
                 synced += 1
-                logger.info(f"Da dong bo su kien cham cong offline: {event_id}")
+                logger.info(f"Đã đồng bộ sự kiện chấm công offline: {event_id}")
             elif status is None or status >= 500:
                 local_store.mark_pending(event_id, "network" if status is None else f"http_{status}")
             else:
                 local_store.mark_failed(event_id, f"http_{status}")
-                logger.warning(f"Su kien cham cong bi tu choi khi dong bo: {event_id} ({status})")
+                logger.warning(f"Sự kiện chấm công bị từ chối khi đồng bộ: {event_id} ({status})")
     return synced
 
 
@@ -305,7 +305,7 @@ def start_outbox_sync_worker() -> None:
             try:
                 sync_pending_attendance_events()
             except Exception as exc:
-                logger.error(f"Loi dong bo outbox kiosk: {exc}")
+                logger.error(f"Lỗi đồng bộ outbox kiosk: {exc}")
             _sync_stop.wait(OUTBOX_SYNC_INTERVAL)
 
     _sync_thread = threading.Thread(target=_loop, name="attendance-outbox-sync", daemon=True)
