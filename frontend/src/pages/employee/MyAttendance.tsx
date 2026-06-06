@@ -132,7 +132,6 @@ const MyAttendance: React.FC = () => {
                   <th className="table-header">Giờ ra</th>
                   <th className="table-header">Số giờ</th>
                   <th className="table-header">Trạng thái</th>
-                  <th className="table-header">Phương thức</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -172,17 +171,6 @@ const MyAttendance: React.FC = () => {
                         ) : (
                           <span className="text-gray-300 text-xs">—</span>
                         )}
-                      </td>
-                      <td className="table-cell">
-                        {log?.method ? (
-                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                            log.method === 'face' ? 'bg-mint-100 text-mint-700' :
-                            log.method === 'rfid' ? 'bg-green-100 text-green-700' :
-                            'bg-yellow-100 text-yellow-700'
-                          }`}>
-                            {log.method === 'face' ? 'Nhận diện' : log.method === 'rfid' ? 'RFID' : 'Thủ công'}
-                          </span>
-                        ) : '—'}
                       </td>
                     </tr>
                   )
