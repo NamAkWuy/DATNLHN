@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, Edit2, Trash2, CheckCircle, XCircle } from 'lucide-react'
+import { Plus, Search, Edit2, Trash2, CheckCircle, XCircle, KeyRound, Copy } from 'lucide-react'
 import { employeeApi, departmentApi } from '../../services/api'
 import type { Employee, Department } from '../../types'
 import PageTitle from '../../components/PageTitle'
@@ -48,6 +48,12 @@ const Employees: React.FC = () => {
 
   const [deleteTarget, setDeleteTarget] = useState<Employee | null>(null)
 
+  // Reset password modal
+  const [resetTarget, setResetTarget] = useState<Employee | null>(null)
+  const [resetPasswordInput, setResetPasswordInput] = useState('')
+  const [resetResult, setResetResult] = useState<{ username: string; temp_password: string } | null>(null)
+  const [copyHint, setCopyHint] = useState(false)
+
   const { data: empData, isLoading } = useQuery({
     queryKey: ['employees', page, search, filterDept, filterStatus],
     queryFn: () =>
@@ -94,6 +100,53 @@ const Employees: React.FC = () => {
       setDeleteTarget(null)
     },
   })
+
+  const resetPasswordMutation = useMutation({
+    mutationFn: ({ id, password }: { id: number; password?: string }) =>
+      employeeApi.resetPassword(id, password),
+    onSuccess: (res) => {
+      if (res.data) {
+        setResetResult({
+          username: res.data.username,
+          temp_password: res.data.temp_password,
+        })
+      }
+    },
+  })
+
+  const openResetPassword = (emp: Employee) => {
+    setResetTarget(emp)
+    setResetPasswordInput('')
+    setResetResult(null)
+    setCopyHint(false)
+  }
+
+  const closeResetPassword = () => {
+    setResetTarget(null)
+    setResetPasswordInput('')
+    setResetResult(null)
+    setCopyHint(false)
+    resetPasswordMutation.reset()
+  }
+
+  const submitResetPassword = () => {
+    if (!resetTarget) return
+    resetPasswordMutation.mutate({
+      id: resetTarget.id,
+      password: resetPasswordInput.trim() || undefined,
+    })
+  }
+
+  const copyTempPassword = async () => {
+    if (!resetResult) return
+    try {
+      await navigator.clipboard.writeText(resetResult.temp_password)
+      setCopyHint(true)
+      setTimeout(() => setCopyHint(false), 1500)
+    } catch {
+      // ignore — clipboard có thể bị chặn ở môi trường không HTTPS
+    }
+  }
 
   const employees = empData?.data?.items || []
   const totalPages = empData?.data?.total_pages || 1
@@ -289,6 +342,13 @@ const Employees: React.FC = () => {
                             title="Chỉnh sửa"
                           >
                             <Edit2 size={16} />
+                          </button>
+                          <button
+                            onClick={() => openResetPassword(emp)}
+                            className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                            title="Đặt lại mật khẩu"
+                          >
+                            <KeyRound size={16} />
                           </button>
                           <button
                             onClick={() => setDeleteTarget(emp)}
@@ -535,6 +595,106 @@ const Employees: React.FC = () => {
           <span className="font-semibold text-gray-900">{deleteTarget?.full_name}</span> không?
         </p>
         <p className="text-gray-500 text-sm mt-2">Thao tác này không thể hoàn tác.</p>
+      </Modal>
+
+      {/* Reset Password Modal */}
+      <Modal
+        isOpen={!!resetTarget}
+        onClose={closeResetPassword}
+        title="Đặt lại mật khẩu"
+        size="md"
+        footer={
+          resetResult ? (
+            <button onClick={closeResetPassword} className="btn-primary">
+              Đóng
+            </button>
+          ) : (
+            <>
+              <button onClick={closeResetPassword} className="btn-secondary">
+                Hủy
+              </button>
+              <button
+                onClick={submitResetPassword}
+                disabled={resetPasswordMutation.isPending}
+                className="btn-primary"
+              >
+                {resetPasswordMutation.isPending ? (
+                  <LoadingSpinner size="sm" />
+                ) : (
+                  'Xác nhận đặt lại'
+                )}
+              </button>
+            </>
+          )
+        }
+      >
+        {resetResult ? (
+          <div className="text-center py-2">
+            <CheckCircle size={44} className="text-green-500 mx-auto mb-3" />
+            <p className="text-base font-semibold text-gray-800 mb-1">
+              Đặt lại mật khẩu thành công!
+            </p>
+            <p className="text-gray-500 text-sm mb-4">
+              Vui lòng gửi thông tin này cho nhân viên (chỉ hiển thị 1 lần).
+            </p>
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-left space-y-2">
+              <p className="text-sm text-gray-600">
+                Tên đăng nhập:{' '}
+                <span className="font-bold text-amber-700">{resetResult.username}</span>
+              </p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm text-gray-600">
+                  Mật khẩu mới:{' '}
+                  <span className="font-bold text-amber-700 font-mono text-base">
+                    {resetResult.temp_password}
+                  </span>
+                </p>
+                <button
+                  onClick={copyTempPassword}
+                  className="flex items-center gap-1 text-xs text-amber-700 hover:bg-amber-100 px-2 py-1 rounded transition-colors"
+                  title="Sao chép mật khẩu"
+                >
+                  <Copy size={12} />
+                  {copyHint ? 'Đã chép!' : 'Chép'}
+                </button>
+              </div>
+              <p className="text-xs text-gray-400 pt-1">
+                Yêu cầu nhân viên đổi mật khẩu ngay sau khi đăng nhập trong trang Hồ sơ.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Đặt lại mật khẩu cho nhân viên{' '}
+              <span className="font-semibold text-gray-900">{resetTarget?.full_name}</span>{' '}
+              <span className="text-gray-400">({resetTarget?.employee_code})</span>.
+            </p>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Mật khẩu mới
+              </label>
+              <input
+                type="text"
+                className="input-field font-mono"
+                value={resetPasswordInput}
+                onChange={(e) => setResetPasswordInput(e.target.value)}
+                placeholder="Để trống → tự sinh chuỗi ngẫu nhiên 8 ký tự"
+                autoFocus
+              />
+              <p className="text-gray-400 text-xs mt-1">
+                Tối thiểu 6 ký tự nếu nhập tay. Mật khẩu cũ sẽ bị ghi đè vĩnh viễn.
+              </p>
+            </div>
+            {resetPasswordMutation.isError && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                <p className="text-red-700 text-sm">
+                  {resetPasswordMutation.error?.message || 'Đặt lại mật khẩu thất bại'}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
       </Modal>
     </div>
   )

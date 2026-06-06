@@ -65,3 +65,12 @@ class EmployeeCreateResponse(BaseModel):
     employee: EmployeeResponse
     username: str
     temp_password: str
+
+
+class ResetPasswordRequest(BaseModel):
+    new_password: Optional[str] = None  # None / rỗng → tự sinh ngẫu nhiên
+
+
+class ResetPasswordResponse(BaseModel):
+    username: str
+    temp_password: str

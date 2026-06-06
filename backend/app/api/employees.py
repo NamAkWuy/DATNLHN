@@ -3,6 +3,8 @@ Các endpoint quản lý nhân viên.
 """
 import os
 import math
+import secrets
+import string
 import unicodedata
 import re
 from app.utils import now_vn
@@ -24,6 +26,8 @@ from app.schemas.employee import (
     EmployeeListResponse,
     EmployeeResponse,
     EmployeeUpdate,
+    ResetPasswordRequest,
+    ResetPasswordResponse,
 )
 
 router = APIRouter()
@@ -271,6 +275,64 @@ def deactivate_employee(
     emp.updated_at = now_vn()
     db.commit()
     return success_response(message="Đã vô hiệu hóa tài khoản nhân viên.")
+
+
+def _generate_temp_password(length: int = 8) -> str:
+    """Sinh mật khẩu tạm ngẫu nhiên: chữ + số, không dùng ký tự dễ nhầm (0/O/l/1)."""
+    alphabet = (string.ascii_letters + string.digits).translate(
+        str.maketrans("", "", "0O1lI")
+    )
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+@router.post("/{employee_id}/reset-password", response_model=dict)
+def reset_employee_password(
+    employee_id: int,
+    body: ResetPasswordRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    """Admin reset mật khẩu cho nhân viên khi họ quên mật khẩu.
+
+    Mật khẩu cũ KHÔNG thể truy xuất (bcrypt hash 1 chiều). Endpoint này
+    chỉ ghi đè bằng mật khẩu mới — nếu admin không nhập, server tự sinh
+    chuỗi 8 ký tự ngẫu nhiên. Sau đó admin đưa lại cho nhân viên dùng
+    tạm và bắt buộc đổi mật khẩu trong trang cá nhân.
+    """
+    emp = db.query(Employee).filter(Employee.id == employee_id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Không tìm thấy nhân viên.")
+
+    user_acc = db.query(User).filter(User.employee_id == employee_id).first()
+    if not user_acc:
+        raise HTTPException(
+            status_code=404,
+            detail="Nhân viên này chưa có tài khoản đăng nhập.",
+        )
+
+    new_password = (body.new_password or "").strip()
+    if new_password:
+        if len(new_password) < 6:
+            raise HTTPException(
+                status_code=400,
+                detail="Mật khẩu mới phải có ít nhất 6 ký tự.",
+            )
+    else:
+        new_password = _generate_temp_password()
+
+    user_acc.password_hash = pwd_context.hash(new_password)
+    # Mở khóa tài khoản phòng trường hợp NV vừa bị khóa do sai mật khẩu nhiều lần
+    user_acc.failed_attempts = 0
+    user_acc.locked_until = None
+    db.commit()
+
+    return success_response(
+        data=ResetPasswordResponse(
+            username=user_acc.username,
+            temp_password=new_password,
+        ).model_dump(),
+        message="Đã đặt lại mật khẩu thành công.",
+    )
 
 
 @router.post("/{employee_id}/avatar", response_model=dict)

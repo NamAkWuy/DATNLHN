@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import create_access_token, get_current_user, success_response
 from app.database import get_db
 from app.models.user import User
-from app.schemas.auth import LoginRequest, TokenResponse, UserInfo
+from app.schemas.auth import ChangePasswordRequest, LoginRequest, TokenResponse, UserInfo
 from passlib.context import CryptContext
 
 router = APIRouter()
@@ -89,6 +89,38 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
 @router.post("/logout", response_model=dict)
 def logout(current_user: User = Depends(get_current_user)):
     return success_response(message="Đăng xuất thành công.")
+
+
+@router.post("/change-password", response_model=dict)
+def change_password(
+    body: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Nhân viên tự đổi mật khẩu sau khi đăng nhập.
+
+    Yêu cầu nhập đúng mật khẩu cũ để chống lạm dụng token bị đánh cắp.
+    Mật khẩu mới được hash bằng bcrypt giống lúc tạo tài khoản.
+    """
+    if not pwd_context.verify(body.old_password, current_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Mật khẩu hiện tại không đúng.",
+        )
+
+    if body.new_password == body.old_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Mật khẩu mới phải khác mật khẩu hiện tại.",
+        )
+
+    current_user.password_hash = pwd_context.hash(body.new_password)
+    # Reset bộ đếm sai để không để lại "rác" sau khi đổi mật khẩu
+    current_user.failed_attempts = 0
+    current_user.locked_until = None
+    db.commit()
+
+    return success_response(message="Đổi mật khẩu thành công.")
 
 
 @router.get("/me", response_model=dict)

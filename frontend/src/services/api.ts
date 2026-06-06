@@ -112,6 +112,13 @@ export const authApi = {
     const res = await api.get<ApiResponse<User>>('/auth/me')
     return res.data
   },
+  changePassword: async (old_password: string, new_password: string) => {
+    const res = await api.post<ApiResponse<null>>('/auth/change-password', {
+      old_password,
+      new_password,
+    })
+    return res.data
+  },
 }
 
 // ─── Phòng ban ──────────────────────────────────────────────────────────────
@@ -170,6 +177,13 @@ export const employeeApi = {
     const res = await api.post<ApiResponse<{ avatar_url: string }>>(`/employees/${id}/avatar`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
+    return res.data
+  },
+  resetPassword: async (id: number, new_password?: string) => {
+    const res = await api.post<ApiResponse<{ username: string; temp_password: string }>>(
+      `/employees/${id}/reset-password`,
+      new_password ? { new_password } : {},
+    )
     return res.data
   },
 }
