@@ -11,8 +11,11 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000/api/v1").rstrip("/")
-WS_URL = os.getenv("WS_URL", "http://localhost:8000/ws/kiosk").rstrip("/")
+# Backend trên Hugging Face Spaces (production). Để debug local, set env var:
+#   set API_BASE_URL=http://localhost:8000/api/v1
+#   set WS_URL=ws://localhost:8000/ws/kiosk
+API_BASE_URL = os.getenv("API_BASE_URL", "https://NamAKWuy-datnlhn-backend.hf.space/api/v1").rstrip("/")
+WS_URL = os.getenv("WS_URL", "wss://NamAKWuy-datnlhn-backend.hf.space/ws/kiosk").rstrip("/")
 DEVICE_ID = os.getenv("DEVICE_ID", "kiosk-001")
 
 # Local outbox: lưu sự kiện chấm công chưa đồng bộ vào SQLite trên máy kiosk.
