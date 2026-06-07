@@ -54,7 +54,6 @@ def _log_to_response(log: AttendanceLog) -> AttendanceLogResponse:
         employee=emp_brief,
         check_in=log.check_in,
         check_out=log.check_out,
-        method=log.method,
         note=log.note,
         date=log.date,
         work_hours=work_hours,
@@ -199,7 +198,6 @@ def checkin(
         log = AttendanceLog(
             employee_id=body.employee_id,
             check_in=event_time,
-            method=body.method,
             note=body.note,
             date=work_date,
         )
@@ -227,7 +225,6 @@ def checkin(
             employee_id=body.employee_id,
             attendance_log_id=log.id,
             action=action,
-            method=body.method,
             device_id=body.device_id,
             occurred_at=event_time,
         ))
@@ -272,7 +269,6 @@ def manual_attendance(
         employee_id=body.employee_id,
         check_in=body.check_in,
         check_out=body.check_out,
-        method=body.method,
         note=body.note,
         date=body.check_in.date() if hasattr(body.check_in, "date") else body.check_in,
     )
@@ -298,8 +294,6 @@ def update_attendance(
         log.date = body.check_in.date() if hasattr(body.check_in, "date") else body.check_in
     if body.check_out is not None:
         log.check_out = body.check_out
-    if body.method is not None:
-        log.method = body.method
     if body.note is not None:
         log.note = body.note
 

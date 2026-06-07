@@ -54,10 +54,12 @@ try:
     from deepface import DeepFace  # type: ignore
     DEEPFACE_AVAILABLE = True
     logger.info("Đã tải DeepFace thành công.")
-except Exception:
+except Exception as _df_exc:
     logger.warning(
-        "Không có DeepFace hoặc tải thất bại. "
-        "Sẽ dùng embedding khuôn mặt giả lập để demo."
+        "Không có DeepFace hoặc tải thất bại (%s: %s). "
+        "Sẽ dùng embedding khuôn mặt giả lập để demo.",
+        type(_df_exc).__name__, _df_exc,
+        exc_info=True,
     )
 
 

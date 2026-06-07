@@ -189,7 +189,6 @@ def run_seed(db: Session) -> None:
             employee_id=emp.id,
             check_in=ci_yesterday,
             check_out=co_yesterday,
-            method=random.choice(["face", "rfid", "manual"]),
             date=yesterday,
         )
         db.add(log_y)
@@ -205,7 +204,6 @@ def run_seed(db: Session) -> None:
             employee_id=emp.id,
             check_in=ci_today,
             check_out=None,
-            method=random.choice(["face", "rfid"]),
             date=today,
         )
         db.add(log_t)

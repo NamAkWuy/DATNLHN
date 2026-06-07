@@ -25,7 +25,6 @@ class KioskAttendanceEvent(Base):
         index=True,
     )
     action: Mapped[str] = mapped_column("hanh_dong", String(20), nullable=False)
-    method: Mapped[str] = mapped_column("phuong_thuc", String(20), nullable=False)
     device_id: Mapped[Optional[str]] = mapped_column("ma_thiet_bi", String(100), nullable=True)
     occurred_at: Mapped[datetime] = mapped_column("thoi_diem_cham_cong", DateTime, nullable=False)
     synced_at: Mapped[datetime] = mapped_column("thoi_diem_dong_bo", DateTime, server_default=func.now(), nullable=False)

@@ -23,10 +23,10 @@ from app.utils import today_vn
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _checkin(client, employee_id: int, method: str = "face"):
+def _checkin(client, employee_id: int):
     return client.post(
         "/api/v1/attendance/checkin",
-        json={"employee_id": employee_id, "method": method},
+        json={"employee_id": employee_id},
     )
 
 
@@ -60,7 +60,7 @@ class TestFaceAttendance:
         """Lần đầu quét mặt → tạo bản ghi mới với check_in."""
         from app.models.attendance_log import AttendanceLog
 
-        res = _checkin(client, employee.id, method="face")
+        res = _checkin(client, employee.id)
         assert res.status_code == 200
         body = res.json()
         assert body["success"] is True
@@ -75,15 +75,14 @@ class TestFaceAttendance:
         assert log is not None
         assert log.check_in is not None
         assert log.check_out is None
-        assert log.method == "face"
 
     def test_second_checkin_becomes_checkout(self, client, employee, db):
         """Lần hai quét mặt cùng ngày → cập nhật check_out."""
         from app.models.attendance_log import AttendanceLog
 
-        _checkin(client, employee.id, method="face")
+        _checkin(client, employee.id)
 
-        res = _checkin(client, employee.id, method="face")
+        res = _checkin(client, employee.id)
         assert res.status_code == 200
         body = res.json()
         assert body["data"]["action"] == "check_out"
@@ -104,17 +103,16 @@ class TestFaceAttendance:
 
     def test_third_checkin_returns_error(self, client, employee):
         """Đã có check_in lẫn check_out → lần thứ ba phải lỗi 400."""
-        _checkin(client, employee.id, method="face")
-        _checkin(client, employee.id, method="face")
+        _checkin(client, employee.id)
+        _checkin(client, employee.id)
 
-        res = _checkin(client, employee.id, method="face")
+        res = _checkin(client, employee.id)
         assert res.status_code == 400
 
     def test_checkin_returns_employee_info_in_log(self, client, employee):
-        res = _checkin(client, employee.id, method="face")
+        res = _checkin(client, employee.id)
         log_data = res.json()["data"]["log"]
         assert log_data["employee_id"] == employee.id
-        assert log_data["method"] == "face"
 
     def test_checkin_stores_correct_date(self, client, employee, db):
         from app.models.attendance_log import AttendanceLog
@@ -139,7 +137,6 @@ class TestFaceAttendance:
             "/api/v1/attendance/checkin",
             json={
                 "employee_id": employee.id,
-                "method": "rfid",
                 "occurred_at": "2026-05-29T07:30:00+07:00",
                 "client_event_id": "evt-test-occurred-at",
                 "device_id": "kiosk-test",
@@ -166,7 +163,6 @@ class TestFaceAttendance:
 
         payload = {
             "employee_id": employee.id,
-            "method": "rfid",
             "occurred_at": "2026-05-29T08:00:00+07:00",
             "client_event_id": "evt-test-idempotent",
             "device_id": "kiosk-test",
@@ -188,39 +184,12 @@ class TestFaceAttendance:
         ).count() == 1
 
     def test_checkin_inactive_employee_returns_403(self, client, inactive_employee):
-        res = _checkin(client, inactive_employee.id, method="face")
+        res = _checkin(client, inactive_employee.id)
         assert res.status_code == 403
 
     def test_checkin_nonexistent_employee_returns_404(self, client):
-        res = _checkin(client, 99999, method="face")
+        res = _checkin(client, 99999)
         assert res.status_code == 404
-
-    def test_checkin_via_rfid_method_stored_correctly(self, client, employee, db):
-        """Phương thức chấm công = 'rfid' phải được lưu đúng."""
-        from app.models.attendance_log import AttendanceLog
-
-        res = _checkin(client, employee.id, method="rfid")
-        assert res.status_code == 200
-
-        log = (
-            db.query(AttendanceLog)
-            .filter(AttendanceLog.employee_id == employee.id)
-            .first()
-        )
-        assert log.method == "rfid"
-
-    def test_checkin_via_manual_method(self, client, employee, db):
-        from app.models.attendance_log import AttendanceLog
-
-        res = _checkin(client, employee.id, method="manual")
-        assert res.status_code == 200
-
-        log = (
-            db.query(AttendanceLog)
-            .filter(AttendanceLog.employee_id == employee.id)
-            .first()
-        )
-        assert log.method == "manual"
 
 
 # ---------------------------------------------------------------------------
@@ -297,12 +266,12 @@ class TestKioskFullFlow:
         emp_id = scan_res.json()["data"]["employee_id"]
 
         # Bước 2: chấm công vào
-        checkin_res = _checkin(client, emp_id, method="rfid")
+        checkin_res = _checkin(client, emp_id)
         assert checkin_res.status_code == 200
         assert checkin_res.json()["data"]["action"] == "check_in"
 
         # Bước 3: chấm công ra
-        checkout_res = _checkin(client, emp_id, method="rfid")
+        checkout_res = _checkin(client, emp_id)
         assert checkout_res.status_code == 200
         assert checkout_res.json()["data"]["action"] == "check_out"
 
@@ -319,26 +288,19 @@ class TestKioskFullFlow:
         assert log is not None
         assert log.check_in is not None
         assert log.check_out is not None
-        assert log.method == "rfid"
 
-    def test_face_then_rfid_checkout_flow(self, client, employee, db):
-        """
-        Chấm công vào bằng khuôn mặt, ra bằng RFID – phương thức cuối cùng lưu
-        theo lần checkin (check-out method không thay đổi method của log).
-        """
+    def test_full_checkin_checkout_flow(self, client, employee, db):
+        """Chấm công vào rồi ra cho cùng nhân viên — log có cả check_in và check_out."""
         from app.models.attendance_log import AttendanceLog
 
         _create_rfid_card(db, uid="MIXED_CARD_001", employee_id=employee.id)
 
-        # Chấm công vào bằng face
-        _checkin(client, employee.id, method="face")
+        _checkin(client, employee.id)
 
-        # Quét thẻ RFID → lấy employee_id
         scan_res = _rfid_scan(client, "MIXED_CARD_001")
         emp_id = scan_res.json()["data"]["employee_id"]
 
-        # Chấm công ra bằng RFID
-        checkout_res = _checkin(client, emp_id, method="rfid")
+        checkout_res = _checkin(client, emp_id)
         assert checkout_res.status_code == 200
         assert checkout_res.json()["data"]["action"] == "check_out"
 
@@ -374,8 +336,8 @@ class TestKioskFullFlow:
         db.add_all([emp_a, emp_b])
         db.flush()
 
-        _checkin(client, emp_a.id, method="face")
-        _checkin(client, emp_b.id, method="face")
+        _checkin(client, emp_a.id)
+        _checkin(client, emp_b.id)
 
         today = today_vn()
         log_a = (

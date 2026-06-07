@@ -112,7 +112,6 @@ class TestCheckinAttendance:
                 "employee_id": 3,
                 "check_in": "2025-01-01T08:00:00",
                 "check_out": None,
-                "method": "face",
                 "date": "2025-01-01",
             },
         }
@@ -120,7 +119,7 @@ class TestCheckinAttendance:
         mock_post.return_value = mock_resp
 
         import api_client
-        result = api_client.checkin_attendance(employee_id=3, method="face")
+        result = api_client.checkin_attendance(employee_id=3)
 
         assert result is not None
         assert result["action"] == "check_in"
@@ -136,7 +135,7 @@ class TestCheckinAttendance:
         mock_post.return_value = mock_resp
 
         import api_client
-        result = api_client.checkin_attendance(employee_id=3, method="face")
+        result = api_client.checkin_attendance(employee_id=3)
 
         assert result["action"] == "check_out"
 
@@ -176,16 +175,15 @@ class TestCheckinAttendance:
         assert "/attendance/checkin" in url
 
     @patch("api_client._client.post")
-    def test_sends_employee_id_and_method(self, mock_post):
+    def test_sends_employee_id(self, mock_post):
         mock_resp = _mock_httpx_response(400, {"detail": "error"})
         mock_post.return_value = mock_resp
 
         import api_client
-        api_client.checkin_attendance(employee_id=9, method="rfid")
+        api_client.checkin_attendance(employee_id=9)
 
         json_payload = mock_post.call_args[1]["json"]
         assert json_payload["employee_id"] == 9
-        assert json_payload["method"] == "rfid"
 
     @patch("api_client._client.post")
     def test_sends_kiosk_sync_metadata(self, mock_post):
@@ -193,7 +191,7 @@ class TestCheckinAttendance:
         mock_post.return_value = mock_resp
 
         import api_client
-        api_client.checkin_attendance(employee_id=9, method="rfid", rfid_uid="UID123")
+        api_client.checkin_attendance(employee_id=9, rfid_uid="UID123")
 
         json_payload = mock_post.call_args[1]["json"]
         assert json_payload["rfid_uid"] == "UID123"

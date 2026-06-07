@@ -394,7 +394,7 @@ def process_rfid(uid: str, frame_bgr, get_latest_frame=None) -> display.ResultOv
     )
 
     # ── Ghi nhận chấm công ────────────────────────────────────────────────
-    result = api_client.checkin_attendance(emp_id, method="rfid", rfid_uid=uid)
+    result = api_client.checkin_attendance(emp_id, rfid_uid=uid)
 
     if result is None:
         return display.ResultOverlay(

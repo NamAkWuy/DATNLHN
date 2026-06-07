@@ -12,7 +12,7 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000/api/v1").rstrip("/")
-WS_URL = os.getenv("WS_URL", "ws://localhost:8000/ws/kiosk")
+WS_URL = os.getenv("WS_URL", "http://localhost:8000/ws/kiosk").rstrip("/")
 DEVICE_ID = os.getenv("DEVICE_ID", "kiosk-001")
 
 # Local outbox: lưu sự kiện chấm công chưa đồng bộ vào SQLite trên máy kiosk.

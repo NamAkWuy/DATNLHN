@@ -214,10 +214,9 @@ def _post(path: str, payload: dict, headers: dict = None, timeout: float = None)
 # Các API chính dùng tại trạm chấm công
 # ---------------------------------------------------------------------------
 
-def _new_attendance_payload(employee_id: int, method: str, rfid_uid: str = None) -> dict:
+def _new_attendance_payload(employee_id: int, rfid_uid: str = None) -> dict:
     payload = {
         "employee_id": employee_id,
-        "method": method,
         "occurred_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "client_event_id": str(uuid.uuid4()),
         "device_id": DEVICE_ID,
@@ -329,8 +328,7 @@ def scan_rfid_card(uid: str) -> Optional[dict]:
     return data
 
 
-def checkin_attendance(employee_id: int, method: str = "face",
-                       rfid_uid: str = None) -> Optional[dict]:
+def checkin_attendance(employee_id: int, rfid_uid: str = None) -> Optional[dict]:
     """
     Ghi nhận chấm công (vào hoặc ra) cho nhân viên.
 
@@ -341,7 +339,7 @@ def checkin_attendance(employee_id: int, method: str = "face",
         {"error": "queued_offline"}        — đã lưu tạm, sẽ đồng bộ lại
         None                               — lỗi không xác định
     """
-    payload = _new_attendance_payload(employee_id, method, rfid_uid)
+    payload = _new_attendance_payload(employee_id, rfid_uid)
     event_id = payload["client_event_id"]
 
     outbox_saved = False

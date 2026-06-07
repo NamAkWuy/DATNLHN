@@ -39,7 +39,6 @@ export interface AttendanceLog {
   employee?: { id: number; full_name: string; employee_code: string };
   check_in: string;
   check_out?: string;
-  method: 'face' | 'rfid' | 'manual';
   note?: string;
   date: string;
   work_hours?: number;

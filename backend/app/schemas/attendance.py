@@ -28,7 +28,6 @@ class EmployeeBrief(BaseModel):
 class CheckInRequest(BaseModel):
     employee_id: int  # employee_id từ nhận diện khuôn mặt
     rfid_uid: Optional[str] = None  # UID thẻ RFID (nếu có)
-    method: str = "manual"  # "face", "rfid", "manual"
     note: Optional[str] = None
     occurred_at: Optional[datetime] = None
     client_event_id: Optional[str] = None
@@ -39,14 +38,12 @@ class AttendanceLogCreate(BaseModel):
     employee_id: int
     check_in: datetime
     check_out: Optional[datetime] = None
-    method: str = "manual"
     note: Optional[str] = None
 
 
 class AttendanceLogUpdate(BaseModel):
     check_in: Optional[datetime] = None
     check_out: Optional[datetime] = None
-    method: Optional[str] = None
     note: Optional[str] = None
 
 
@@ -56,7 +53,6 @@ class AttendanceLogResponse(BaseModel):
     employee: Optional[EmployeeBrief] = None
     check_in: datetime
     check_out: Optional[datetime] = None
-    method: str
     note: Optional[str] = None
     date: date
     work_hours: Optional[float] = None
