@@ -205,7 +205,7 @@ python main.py
 Kiosk local co the gui thang len backend online bang bien moi truong:
 
 ```powershell
-$env:API_BASE_URL="https://<render-backend>.onrender.com/api/v1"
+$env:API_BASE_URL="https://<...>.....com/api/v1"
 $env:DEVICE_ID="kiosk-001"
 python main.py
 ```
