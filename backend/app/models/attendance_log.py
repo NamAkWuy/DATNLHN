@@ -15,6 +15,7 @@ class AttendanceLog(Base):
     )
     check_in: Mapped[datetime] = mapped_column("gio_vao", DateTime, nullable=False)
     check_out: Mapped[Optional[datetime]] = mapped_column("gio_ra", DateTime, nullable=True)
+    method: Mapped[str] = mapped_column("phuong_thuc", String(20), nullable=False, default="manual")
     note: Mapped[Optional[str]] = mapped_column("ghi_chu", Text, nullable=True)
     date: Mapped[date] = mapped_column("ngay_lam_viec", Date, nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column("ngay_tao", DateTime, default=func.now(), nullable=False)

@@ -200,6 +200,7 @@ def checkin(
             check_in=event_time,
             note=body.note,
             date=work_date,
+            method="face",
         )
         db.add(log)
         db.flush()
@@ -271,6 +272,7 @@ def manual_attendance(
         check_out=body.check_out,
         note=body.note,
         date=body.check_in.date() if hasattr(body.check_in, "date") else body.check_in,
+        method="manual",
     )
     db.add(log)
     db.commit()

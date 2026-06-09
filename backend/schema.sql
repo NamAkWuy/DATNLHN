@@ -116,6 +116,7 @@ CREATE TABLE IF NOT EXISTS lich_su_cham_cong (
     ma_nhan_vien    INT             NOT NULL                  COMMENT 'Mã nhân viên (khóa ngoại → nhan_vien)',
     gio_vao         DATETIME        NOT NULL                  COMMENT 'Thời điểm vào ca (check-in)',
     gio_ra          DATETIME            NULL                  COMMENT 'Thời điểm ra ca (check-out, NULL = chưa ra)',
+    phuong_thuc     VARCHAR(20)     NOT NULL DEFAULT 'manual' COMMENT 'Phương thức chấm công: face | manual (RFID chỉ là bước xác minh chéo)',
     ghi_chu         TEXT                NULL                  COMMENT 'Ghi chú thêm',
     ngay_lam_viec   DATE            NOT NULL                  COMMENT 'Ngày làm việc (dùng để truy vấn theo ngày)',
     ngay_tao        DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Thời điểm tạo bản ghi',

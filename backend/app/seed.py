@@ -190,6 +190,7 @@ def run_seed(db: Session) -> None:
             check_in=ci_yesterday,
             check_out=co_yesterday,
             date=yesterday,
+            method="face",
         )
         db.add(log_y)
 
@@ -205,6 +206,7 @@ def run_seed(db: Session) -> None:
             check_in=ci_today,
             check_out=None,
             date=today,
+            method="face",
         )
         db.add(log_t)
 
