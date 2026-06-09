@@ -226,6 +226,7 @@ def checkin(
             employee_id=body.employee_id,
             attendance_log_id=log.id,
             action=action,
+            method="face",
             device_id=body.device_id,
             occurred_at=event_time,
         ))

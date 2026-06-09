@@ -138,6 +138,7 @@ CREATE TABLE IF NOT EXISTS su_kien_cham_cong_kiosk (
     ma_nhan_vien        INT          NOT NULL,
     ma_ban_ghi          INT          NOT NULL,
     hanh_dong           VARCHAR(20)  NOT NULL COMMENT 'check_in | check_out',
+    phuong_thuc         VARCHAR(20)  NOT NULL DEFAULT 'face' COMMENT 'Phương thức chấm công kiosk (luôn là face)',
     ma_thiet_bi         VARCHAR(100)     NULL,
     thoi_diem_cham_cong DATETIME     NOT NULL,
     thoi_diem_dong_bo   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
