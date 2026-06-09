@@ -48,6 +48,50 @@ _BACKEND_MAP = {
 }
 
 
+class _CameraReader:
+    """
+    Đọc frame từ camera trong luồng nền, chỉ giữ frame mới nhất.
+
+    Vì sao cần:
+      cap.read() trên Windows (cả MSMF và DSHOW) thỉnh thoảng block 50-100ms
+      khi driver đang refill internal buffer. Nếu vòng lặp chính gọi trực
+      tiếp, mọi thứ (overlay Pillow, imshow) cũng dừng theo → frame giật.
+
+      Tách riêng luồng đọc: thread spin liên tục trên cap.read(), main loop
+      chỉ "ngó" frame mới nhất qua read(). Nếu camera đang stall, main loop
+      vẽ lại frame cũ → mắt người thấy mượt thay vì freeze.
+
+    Trade-off:
+      • Có thể bỏ qua vài frame trung gian khi camera nhanh hơn UI — đúng
+        điều mình muốn cho real-time display, không cần record toàn bộ.
+      • Thêm ~1 thread daemon, RAM không đáng kể (giữ 1 ndarray HxWx3).
+    """
+    def __init__(self, cap):
+        self.cap = cap
+        self._frame = None
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def _loop(self):
+        while not self._stop.is_set():
+            ret, frame = self.cap.read()
+            if not ret:
+                time.sleep(0.005)
+                continue
+            with self._lock:
+                self._frame = frame
+
+    def read(self):
+        with self._lock:
+            return None if self._frame is None else self._frame.copy()
+
+    def stop(self):
+        self._stop.set()
+        self._thread.join(timeout=1.0)
+
+
 def _fmt_time(iso_str: str) -> str:
     """Hiển thị HH:MM từ ISO datetime do server trả về (đã có offset +07:00)."""
     if not iso_str:
@@ -639,12 +683,28 @@ def main():
 
     logger.info("Kiosk đã khởi động.  Q/ESC=thoát | R=đăng ký mặt | quẹt thẻ RFID=điểm danh")
 
+    # Tách cap.read() ra luồng nền: main loop không bị block khi driver
+    # camera stall, UI vẽ tiếp với frame trước đó → hết giật.
+    reader = _CameraReader(cap)
+    # Chờ tối đa 2s cho frame đầu tiên xuất hiện (camera warm-up).
+    warmup_start = time.time()
+    while reader.read() is None and time.time() - warmup_start < 2.0:
+        time.sleep(0.02)
+
     quit_flag = False
 
+    # Throttle Haar detect: chạy cách frame (detect mỗi DETECT_EVERY frame),
+    # giữa các lần dùng lại bbox cũ. Mắt người không phân biệt được khung
+    # khuôn mặt update 30 lần/giây hay 15 lần/giây, nhưng CPU tiết kiệm
+    # khoảng nửa thời gian detect.
+    DETECT_EVERY = 2
+    last_faces: list = []
+    frame_idx = 0
+
     while not quit_flag:
-        ret, frame = cap.read()
-        if not ret:
-            time.sleep(0.05)
+        frame = reader.read()
+        if frame is None:
+            time.sleep(0.01)
             continue
 
         # Xoay frame ngay sau khi đọc — mọi xử lý downstream (detect, burst,
@@ -662,16 +722,20 @@ def main():
 
         # Downscale rồi mới convert xám: detect trên ảnh nhỏ tốn ~1/(scale^2)
         # CPU. Frame gốc vẫn được giữ nguyên cho việc gửi backend & hiển thị.
-        frame_h_full, frame_w_full = frame.shape[:2]
-        if DETECT_WIDTH and frame_w_full > DETECT_WIDTH:
-            detect_scale = frame_w_full / DETECT_WIDTH
-            new_h = int(frame_h_full / detect_scale)
-            small = cv2.resize(frame, (DETECT_WIDTH, new_h),
-                               interpolation=cv2.INTER_AREA)
-            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-        else:
-            detect_scale = 1.0
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        # Chỉ làm việc này khi đến lượt detect (throttle theo DETECT_EVERY).
+        frame_idx += 1
+        do_detect = (frame_idx % DETECT_EVERY == 0)
+        if do_detect:
+            frame_h_full, frame_w_full = frame.shape[:2]
+            if DETECT_WIDTH and frame_w_full > DETECT_WIDTH:
+                detect_scale = frame_w_full / DETECT_WIDTH
+                new_h = int(frame_h_full / detect_scale)
+                small = cv2.resize(frame, (DETECT_WIDTH, new_h),
+                                   interpolation=cv2.INTER_AREA)
+                gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+            else:
+                detect_scale = 1.0
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         # ── Lấy hết phím OpenCV trong hàng đợi (cả phím từ RFID lẫn phím thường) ──
         while True:
@@ -745,20 +809,28 @@ def main():
                 launch(process_rfid, uid, snap)
 
         # ── Phát hiện khuôn mặt (chỉ để hiển thị khung, không xác thực) ──────
-        faces = detect_faces(gray, detector, scale=detect_scale)
+        # Chỉ chạy detect ở những frame được throttle ở trên; giữa các lần
+        # dùng lại bbox cũ → khung khuôn mặt vẫn theo người dùng "đủ mượt"
+        # (lag tối đa 1 frame = ~33ms) nhưng cắt được nửa CPU detect.
+        if do_detect:
+            last_faces = detect_faces(gray, detector, scale=detect_scale)
+        faces = last_faces
 
         # ── Phóng frame lên DISPLAY_SCALE trước khi vẽ overlay ────────────────
         # Lý do: cv2.imshow chỉ scale bằng bilinear → fullscreen mờ. Nếu ta
-        # upscale frame lên 1.5x với LANCZOS4 trước khi vẽ, thì:
+        # upscale frame lên DISPLAY_SCALE trước khi vẽ, thì:
         #   • Camera image sắc hơn bilinear của driver
         #   • Quan trọng hơn — TEXT + FACE BOX được Pillow vẽ Ở ĐỘ PHÂN GIẢI
         #     CAO (1920×1080 thay vì 1280×720) → sắc nét rõ khi fullscreen
         # Face bbox cũng scale theo để vẽ đúng vị trí.
+        # INTER_CUBIC ≈ chất lượng Lanczos4 ở mức 1.5-2x nhưng nhanh hơn 3-5
+        # lần → đỡ giật khi vẽ frame mỗi loop, sự khác biệt nét bằng mắt
+        # thường không nhận ra ở khoảng cách xem bình thường.
         if DISPLAY_SCALE != 1.0:
             new_w = int(frame.shape[1] * DISPLAY_SCALE)
             new_h = int(frame.shape[0] * DISPLAY_SCALE)
             display_frame = cv2.resize(
-                frame, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4
+                frame, (new_w, new_h), interpolation=cv2.INTER_CUBIC
             )
             faces_disp = [
                 (int(x * DISPLAY_SCALE), int(y * DISPLAY_SCALE),
@@ -797,6 +869,7 @@ def main():
 
         cv2.imshow(WINDOW_TITLE, display_frame)
 
+    reader.stop()
     cap.release()
     api_client.stop_outbox_sync_worker()
     cv2.destroyAllWindows()

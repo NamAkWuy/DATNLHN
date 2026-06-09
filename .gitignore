@@ -88,3 +88,11 @@ tmp/
 env
 venv
 ENV
+
+# Tài liệu cá nhân (slide bảo vệ, ghi chú ôn tập) — không push lên repo
+SLIDE_*.md
+*.docx
+
+# Script one-shot / debug local của backend — không push lên repo
+backend/_*.py
+backend/sync_*.py
