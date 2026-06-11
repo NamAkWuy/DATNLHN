@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # ArcFace cosine: cùng người ~0.55–0.85, khác người ~0.05–0.40.
-VERIFY_THRESHOLD = float(os.getenv("FACE_VERIFY_THRESHOLD", "0.55"))
+VERIFY_THRESHOLD = float(os.getenv("FACE_VERIFY_THRESHOLD", "0.40"))
 MOCK_VERIFY_THRESHOLD = float(os.getenv("FACE_MOCK_VERIFY_THRESHOLD", "0.86"))
 
 # Gallery = 1 primary + tối đa 7 phụ (seed đa pose + adaptive).
