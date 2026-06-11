@@ -194,28 +194,10 @@ def _get_wait_detector():
     return _WAIT_DETECTOR
 
 
-def _wait_for_face(get_latest_frame, timeout: float = 2.0,
-                   poll_interval: float = 0.08,
+def _wait_for_face(get_latest_frame, timeout: float = 1.0,
+                   poll_interval: float = 0.05,
                    downscale_to: int = 480):
-    """
-    Đợi đến khi camera thấy khuôn mặt người dùng, tối đa `timeout` giây.
-
-    Vì sao tồn tại:
-      Sau khi user quẹt RFID, hệ thống thường chụp NGAY — user còn đang đưa
-      tay xuống, chưa nhìn vào camera → backend Haar không thấy mặt → fail
-      "Không phát hiện khuôn mặt". Kiosk retry burst nhưng burst chỉ cách
-      nhau 50ms × 8 frame = 400ms, không đủ để user kịp ổn định.
-
-      Hàm này detect face NGAY TẠI KIOSK (không gửi backend) trong vòng lặp
-      poll mỗi 80ms, chỉ trả về khi local detector thấy mặt — coi như tín
-      hiệu "user đã sẵn sàng". Sau đó mới gọi burst để chụp frame nét nhất.
-
-    Trade-off:
-      • Thêm tối đa 2 giây trễ trong trường hợp xấu nhất, nhưng cắt được
-        hầu hết các lần retry "không phát hiện" nên trung bình nhanh hơn.
-      • Detect local dùng ảnh downscale 480px + minSize=60 → ~5-15ms/frame
-        trên Ryzen 7000, không gây lag UI.
-    """
+    """Đợi local detector thấy mặt rồi trả về frame đó; trả về frame cuối nếu quá `timeout`."""
     if get_latest_frame is None:
         return None
     detector = _get_wait_detector()
@@ -323,12 +305,9 @@ def process_rfid(uid: str, frame_bgr, get_latest_frame=None) -> display.ResultOv
     emp_id   = emp_info.get("employee_id")
     logger.info(f"Thẻ của: {emp_name} (id={emp_id})")
 
-    # ── Đợi user vào khung hình trước khi chụp ──────────────────────────────
-    # Sau khi quẹt thẻ, user thường còn đang đưa tay xuống → nếu chụp ngay,
-    # backend Haar không thấy mặt → nhiều retry "Không phát hiện khuôn mặt".
-    # Detect tại kiosk (cheap) và đợi tới khi thấy face, tối đa 2s rồi mới
-    # bắt đầu burst. Frame trả về dùng làm seed thay cho `frame_bgr` ban đầu.
-    ready_frame = _wait_for_face(get_latest_frame, timeout=2.0)
+    # Đợi tới khi local detector thấy mặt rồi mới burst; trả về NGAY khi thấy,
+    # 1.0s chỉ là trần fallback nếu không thấy mặt.
+    ready_frame = _wait_for_face(get_latest_frame, timeout=1.0)
     if ready_frame is not None:
         frame_bgr = ready_frame
 
