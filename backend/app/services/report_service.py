@@ -9,47 +9,60 @@ from typing import Optional
 
 _PDF_FONT_REGULAR = "Helvetica"
 _PDF_FONT_BOLD = "Helvetica-Bold"
-_PDF_FONTS_REGISTERED = False
+_PDF_FONTS_OK = False
+
+_BUNDLED_FONT_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "assets", "fonts"
+)
 
 
 def _register_pdf_fonts() -> None:
-    """Đăng ký font TTF Unicode để PDF hiển thị được dấu tiếng Việt.
+    """Đăng ký font TTF Unicode để PDF hiển thị dấu tiếng Việt.
 
-    Thử lần lượt các font hệ thống phổ biến trên Windows / Linux. Nếu không tìm
-    thấy thì lặng lẽ fall back về Helvetica (Type 1 sẵn có, không hỗ trợ tiếng Việt).
+    Ưu tiên font đi kèm trong ``backend/app/assets/fonts`` để hoạt động trên
+    mọi môi trường (Windows / Linux / Docker). Khi không tìm thấy mới thử font
+    hệ thống. Chỉ đánh dấu "đã đăng ký" sau khi đăng ký thành công, tránh
+    trường hợp lần đầu fail rồi các lần sau bị bỏ qua.
     """
-    global _PDF_FONT_REGULAR, _PDF_FONT_BOLD, _PDF_FONTS_REGISTERED
-    if _PDF_FONTS_REGISTERED:
+    global _PDF_FONT_REGULAR, _PDF_FONT_BOLD, _PDF_FONTS_OK
+    if _PDF_FONTS_OK:
         return
 
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
 
     candidates = [
-        ("VN", "C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/arialbd.ttf"),
-        ("VN", "C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/segoeuib.ttf"),
-        ("VN", "C:/Windows/Fonts/tahoma.ttf", "C:/Windows/Fonts/tahomabd.ttf"),
-        ("VN", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        (
+            os.path.join(_BUNDLED_FONT_DIR, "Arial.ttf"),
+            os.path.join(_BUNDLED_FONT_DIR, "Arial-Bold.ttf"),
+        ),
+        ("C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/arialbd.ttf"),
+        ("C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/segoeuib.ttf"),
+        ("C:/Windows/Fonts/tahoma.ttf", "C:/Windows/Fonts/tahomabd.ttf"),
+        ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
          "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
-        ("VN", "/Library/Fonts/Arial.ttf", "/Library/Fonts/Arial Bold.ttf"),
+        ("/Library/Fonts/Arial.ttf", "/Library/Fonts/Arial Bold.ttf"),
     ]
 
-    for name, regular_path, bold_path in candidates:
-        if os.path.exists(regular_path):
-            try:
-                pdfmetrics.registerFont(TTFont(name, regular_path))
-                bold_name = f"{name}-Bold"
-                if os.path.exists(bold_path):
-                    pdfmetrics.registerFont(TTFont(bold_name, bold_path))
-                else:
-                    bold_name = name
-                _PDF_FONT_REGULAR = name
-                _PDF_FONT_BOLD = bold_name
-                break
-            except Exception:
-                continue
+    registered_names = set(pdfmetrics.getRegisteredFontNames())
 
-    _PDF_FONTS_REGISTERED = True
+    for regular_path, bold_path in candidates:
+        if not os.path.exists(regular_path):
+            continue
+        try:
+            if "VN" not in registered_names:
+                pdfmetrics.registerFont(TTFont("VN", regular_path))
+            if os.path.exists(bold_path):
+                if "VN-Bold" not in registered_names:
+                    pdfmetrics.registerFont(TTFont("VN-Bold", bold_path))
+                _PDF_FONT_BOLD = "VN-Bold"
+            else:
+                _PDF_FONT_BOLD = "VN"
+            _PDF_FONT_REGULAR = "VN"
+            _PDF_FONTS_OK = True
+            return
+        except Exception:
+            continue
 
 
 # ---------------------------------------------------------------------------
